@@ -417,7 +417,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func buildSettingsWindow() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 320, height: 170),
+            contentRect: NSRect(x: 0, y: 0, width: 320, height: 200),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -426,46 +426,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.isReleasedWhenClosed = false
         window.center()
 
-        let content = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 170))
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 200))
 
         let checkbox = NSButton(
             checkboxWithTitle: "Run on a schedule",
             target: self,
             action: nil
         )
-        checkbox.frame = NSRect(x: 20, y: 120, width: 280, height: 24)
+        checkbox.frame = NSRect(x: 20, y: 155, width: 280, height: 24)
         content.addSubview(checkbox)
         scheduleEnabledCheckbox = checkbox
 
         let startLabel = NSTextField(labelWithString: "Start:")
-        startLabel.frame = NSRect(x: 20, y: 78, width: 50, height: 24)
+        startLabel.frame = NSRect(x: 20, y: 111, width: 50, height: 24)
         content.addSubview(startLabel)
 
-        let startHour = makeHourPopup(frame: NSRect(x: 75, y: 74, width: 62, height: 26))
+        let startHour = makeHourPopup(frame: NSRect(x: 75, y: 107, width: 62, height: 26))
         content.addSubview(startHour)
         startHourPopup = startHour
 
         let startColon = NSTextField(labelWithString: ":")
-        startColon.frame = NSRect(x: 140, y: 78, width: 12, height: 24)
+        startColon.frame = NSRect(x: 140, y: 111, width: 12, height: 24)
         content.addSubview(startColon)
 
-        let startMinute = makeMinutePopup(frame: NSRect(x: 155, y: 74, width: 62, height: 26))
+        let startMinute = makeMinutePopup(frame: NSRect(x: 155, y: 107, width: 62, height: 26))
         content.addSubview(startMinute)
         startMinutePopup = startMinute
 
         let endLabel = NSTextField(labelWithString: "End:")
-        endLabel.frame = NSRect(x: 20, y: 38, width: 50, height: 24)
+        endLabel.frame = NSRect(x: 20, y: 71, width: 50, height: 24)
         content.addSubview(endLabel)
 
-        let endHour = makeHourPopup(frame: NSRect(x: 75, y: 34, width: 62, height: 26))
+        let endHour = makeHourPopup(frame: NSRect(x: 75, y: 67, width: 62, height: 26))
         content.addSubview(endHour)
         endHourPopup = endHour
 
         let endColon = NSTextField(labelWithString: ":")
-        endColon.frame = NSRect(x: 140, y: 38, width: 12, height: 24)
+        endColon.frame = NSRect(x: 140, y: 71, width: 12, height: 24)
         content.addSubview(endColon)
 
-        let endMinute = makeMinutePopup(frame: NSRect(x: 155, y: 34, width: 62, height: 26))
+        let endMinute = makeMinutePopup(frame: NSRect(x: 155, y: 67, width: 62, height: 26))
         content.addSubview(endMinute)
         endMinutePopup = endMinute
 

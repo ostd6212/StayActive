@@ -30,8 +30,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var scheduleCheckTimer: Timer?
     private var settingsWindow: NSWindow?
     private var scheduleEnabledCheckbox: NSButton?
-    private var startTimePicker: NSDatePicker?
-    private var endTimePicker: NSDatePicker?
+    private var startHourPopup: NSPopUpButton?
+    private var startMinutePopup: NSPopUpButton?
+    private var endHourPopup: NSPopUpButton?
+    private var endMinutePopup: NSPopUpButton?
+
+    private let minuteStep = 5
 
     private let defaults = UserDefaults.standard
 
@@ -116,7 +120,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem.separator())
 
         let settingsItem = NSMenuItem(
-            title: "Налаштування…",
+            title: "Settings…",
             action: #selector(openSettings),
             keyEquivalent: ","
         )
@@ -126,7 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem.separator())
 
         let quitItem = NSMenuItem(
-            title: "Вийти",
+            title: "Quit",
             action: #selector(quit),
             keyEquivalent: "q"
         )
@@ -139,7 +143,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func toggleTitle() -> String {
-        return isActive ? "Вимкнути" : "Увімкнути"
+        return isActive ? "Disable" : "Enable"
     }
 
     @objc private func toggleActive() {
@@ -372,18 +376,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func dateFromMinutes(_ minutes: Int) -> Date {
-        var comps = DateComponents()
-        comps.hour = minutes / 60
-        comps.minute = minutes % 60
-        return Calendar.current.date(from: comps) ?? Date()
-    }
-
-    private func minutesFromDate(_ date: Date) -> Int {
-        let comps = Calendar.current.dateComponents([.hour, .minute], from: date)
-        return (comps.hour ?? 0) * 60 + (comps.minute ?? 0)
-    }
-
     // MARK: - Settings window
 
     @objc private func openSettings() {
@@ -392,9 +384,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             buildSettingsWindow()
         }
         scheduleEnabledCheckbox?.state = scheduleEnabled ? .on : .off
-        startTimePicker?.dateValue = dateFromMinutes(scheduleStartMinutes)
-        endTimePicker?.dateValue = dateFromMinutes(scheduleEndMinutes)
+        selectTime(scheduleStartMinutes, hourPopup: startHourPopup, minutePopup: startMinutePopup)
+        selectTime(scheduleEndMinutes, hourPopup: endHourPopup, minutePopup: endMinutePopup)
         settingsWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    private func makeHourPopup(frame: NSRect) -> NSPopUpButton {
+        let popup = NSPopUpButton(frame: frame, pullsDown: false)
+        popup.addItems(withTitles: (0..<24).map { String(format: "%02d", $0) })
+        return popup
+    }
+
+    private func makeMinutePopup(frame: NSRect) -> NSPopUpButton {
+        let popup = NSPopUpButton(frame: frame, pullsDown: false)
+        popup.addItems(withTitles: stride(from: 0, to: 60, by: minuteStep).map { String(format: "%02d", $0) })
+        return popup
+    }
+
+    private func selectTime(_ minutes: Int, hourPopup: NSPopUpButton?, minutePopup: NSPopUpButton?) {
+        let hour = minutes / 60
+        let minute = minutes % 60
+        let roundedMinuteIndex = Int((Double(minute) / Double(minuteStep)).rounded()) % (60 / minuteStep)
+        hourPopup?.selectItem(at: hour)
+        minutePopup?.selectItem(at: roundedMinuteIndex)
+    }
+
+    private func readTime(hourPopup: NSPopUpButton?, minutePopup: NSPopUpButton?) -> Int {
+        let hour = hourPopup?.indexOfSelectedItem ?? 0
+        let minuteIndex = minutePopup?.indexOfSelectedItem ?? 0
+        return hour * 60 + minuteIndex * minuteStep
     }
 
     private func buildSettingsWindow() {
@@ -404,42 +422,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             backing: .buffered,
             defer: false
         )
-        window.title = "StayActive — Налаштування"
+        window.title = "StayActive — Settings"
         window.isReleasedWhenClosed = false
         window.center()
 
         let content = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 170))
 
         let checkbox = NSButton(
-            checkboxWithTitle: "Працювати за розкладом",
+            checkboxWithTitle: "Run on a schedule",
             target: self,
-            action: #selector(scheduleCheckboxChanged)
+            action: nil
         )
         checkbox.frame = NSRect(x: 20, y: 120, width: 280, height: 24)
         content.addSubview(checkbox)
         scheduleEnabledCheckbox = checkbox
 
-        let startLabel = NSTextField(labelWithString: "Початок:")
-        startLabel.frame = NSRect(x: 20, y: 78, width: 70, height: 24)
+        let startLabel = NSTextField(labelWithString: "Start:")
+        startLabel.frame = NSRect(x: 20, y: 78, width: 50, height: 24)
         content.addSubview(startLabel)
 
-        let startPicker = NSDatePicker(frame: NSRect(x: 100, y: 74, width: 100, height: 28))
-        startPicker.datePickerElements = [.hourMinute]
-        startPicker.datePickerStyle = .textFieldAndStepper
-        content.addSubview(startPicker)
-        startTimePicker = startPicker
+        let startHour = makeHourPopup(frame: NSRect(x: 75, y: 74, width: 62, height: 26))
+        content.addSubview(startHour)
+        startHourPopup = startHour
 
-        let endLabel = NSTextField(labelWithString: "Кінець:")
-        endLabel.frame = NSRect(x: 20, y: 38, width: 70, height: 24)
+        let startColon = NSTextField(labelWithString: ":")
+        startColon.frame = NSRect(x: 140, y: 78, width: 12, height: 24)
+        content.addSubview(startColon)
+
+        let startMinute = makeMinutePopup(frame: NSRect(x: 155, y: 74, width: 62, height: 26))
+        content.addSubview(startMinute)
+        startMinutePopup = startMinute
+
+        let endLabel = NSTextField(labelWithString: "End:")
+        endLabel.frame = NSRect(x: 20, y: 38, width: 50, height: 24)
         content.addSubview(endLabel)
 
-        let endPicker = NSDatePicker(frame: NSRect(x: 100, y: 34, width: 100, height: 28))
-        endPicker.datePickerElements = [.hourMinute]
-        endPicker.datePickerStyle = .textFieldAndStepper
-        content.addSubview(endPicker)
-        endTimePicker = endPicker
+        let endHour = makeHourPopup(frame: NSRect(x: 75, y: 34, width: 62, height: 26))
+        content.addSubview(endHour)
+        endHourPopup = endHour
 
-        let saveButton = NSButton(title: "Зберегти", target: self, action: #selector(saveSettings))
+        let endColon = NSTextField(labelWithString: ":")
+        endColon.frame = NSRect(x: 140, y: 38, width: 12, height: 24)
+        content.addSubview(endColon)
+
+        let endMinute = makeMinutePopup(frame: NSRect(x: 155, y: 34, width: 62, height: 26))
+        content.addSubview(endMinute)
+        endMinutePopup = endMinute
+
+        let saveButton = NSButton(title: "Save", target: self, action: #selector(saveSettings))
         saveButton.frame = NSRect(x: 210, y: 15, width: 90, height: 32)
         saveButton.bezelStyle = .rounded
         saveButton.keyEquivalent = "\r"
@@ -449,18 +479,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindow = window
     }
 
-    @objc private func scheduleCheckboxChanged() {
-        // Applied on Save, this just reflects immediate UI state.
-    }
-
     @objc private func saveSettings() {
         scheduleEnabled = (scheduleEnabledCheckbox?.state == .on)
-        if let start = startTimePicker?.dateValue {
-            scheduleStartMinutes = minutesFromDate(start)
-        }
-        if let end = endTimePicker?.dateValue {
-            scheduleEndMinutes = minutesFromDate(end)
-        }
+        scheduleStartMinutes = readTime(hourPopup: startHourPopup, minutePopup: startMinutePopup)
+        scheduleEndMinutes = readTime(hourPopup: endHourPopup, minutePopup: endMinutePopup)
 
         log("StayActive: schedule settings saved, enabled=\(scheduleEnabled), start=\(scheduleStartMinutes)min, end=\(scheduleEndMinutes)min")
 

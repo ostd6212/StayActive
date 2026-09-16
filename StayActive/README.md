@@ -79,14 +79,15 @@ certificate.
 
 ## Using the app
 
-- Menu bar icon: green circle = active (nudging every 20s + blocking
+- Menu bar icon: green circle = active (nudging every 60s + blocking
   display sleep), gray = disabled.
-- Menu: **Вимкнути** / **Увімкнути** toggles it, **Налаштування…** opens
-  the schedule window, **Вийти** quits.
-- **Налаштування…**: check "Працювати за розкладом" and set a start/end
-  time (e.g. 09:00–18:00) — the app then switches itself on/off at those
-  times automatically, checked every 30s. Overnight ranges work too
-  (e.g. 22:00–06:00). Manual toggling from the menu still works between
+- Menu: **Disable** / **Enable** toggles it, **Settings…** opens the
+  schedule window, **Quit** quits.
+- **Settings…**: check "Run on a schedule" and pick a start/end time
+  from the hour/minute dropdowns (5-minute steps) — the app then
+  switches itself on/off at those times automatically, checked every
+  30s. Overnight ranges work too (e.g. 22:00–06:00). Manual toggling
+  from the menu still works between
   schedule checks; the next scheduled boundary will re-apply the
   schedule's state. Settings persist in `UserDefaults` across restarts.
 - Every 20 seconds while active it moves the mouse 1px and back, and

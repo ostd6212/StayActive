@@ -1,6 +1,17 @@
 import Cocoa
 import IOKit.pwr_mgt
 import ApplicationServices
+import os.log
+
+// NSLog messages show up as "<private>" in Console/log stream because the
+// unified logging system treats NSLog's fully-composed string as a single
+// dynamic %@ argument, which is redacted by default. Route through os_log
+// with an explicit %{public}@ so the text stays readable.
+private let stayActiveLog = OSLog(subsystem: "com.dmytro.stayactive", category: "general")
+
+func log(_ message: String) {
+    os_log("%{public}@", log: stayActiveLog, type: .info, message)
+}
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
@@ -15,7 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let nudgeInterval: TimeInterval = 20.0
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSLog("StayActive: applicationDidFinishLaunching - starting up")
+        log("StayActive: applicationDidFinishLaunching - starting up")
 
         setupStatusItem()
         checkAccessibilityTrust()
@@ -23,11 +34,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         createDisplaySleepAssertion()
         startTimer()
 
-        NSLog("StayActive: startup complete, nudge interval = \(nudgeInterval)s")
+        log("StayActive: startup complete, nudge interval = \(nudgeInterval)s")
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        NSLog("StayActive: applicationWillTerminate - cleaning up")
+        log("StayActive: applicationWillTerminate - cleaning up")
         timer?.invalidate()
         endBackgroundActivity()
         releaseDisplaySleepAssertion()
@@ -36,7 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Status item / menu
 
     private func setupStatusItem() {
-        NSLog("StayActive: setting up status item")
+        log("StayActive: setting up status item")
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem.button?.image = makeStatusIcon(active: isActive)
@@ -64,7 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         statusItem.menu = menu
 
-        NSLog("StayActive: status item ready")
+        log("StayActive: status item ready")
     }
 
     private func toggleTitle() -> String {
@@ -73,7 +84,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func toggleActive() {
         isActive.toggle()
-        NSLog("StayActive: toggled, isActive = \(isActive)")
+        log("StayActive: toggled, isActive = \(isActive)")
 
         statusItem.button?.image = makeStatusIcon(active: isActive)
         statusItem.menu?.item(at: 0)?.title = toggleTitle()
@@ -89,7 +100,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func quit() {
-        NSLog("StayActive: quit requested")
+        log("StayActive: quit requested")
         NSApp.terminate(nil)
     }
 
@@ -136,13 +147,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
         let options: CFDictionary = [promptKey: true] as CFDictionary
         let trusted = AXIsProcessTrustedWithOptions(options)
-        NSLog("StayActive: AXIsProcessTrustedWithOptions -> trusted = \(trusted)")
+        log("StayActive: AXIsProcessTrustedWithOptions -> trusted = \(trusted)")
     }
 
     // MARK: - App Nap / idle sleep prevention
 
     private func beginBackgroundActivity() {
-        NSLog("StayActive: beginning ProcessInfo activity (disables App Nap)")
+        log("StayActive: beginning ProcessInfo activity (disables App Nap)")
         activityToken = ProcessInfo.processInfo.beginActivity(
             options: [.userInitiated, .idleSystemSleepDisabled],
             reason: "Keep app responsive and prevent idle system sleep while active"
@@ -153,7 +164,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let token = activityToken {
             ProcessInfo.processInfo.endActivity(token)
             activityToken = nil
-            NSLog("StayActive: ended ProcessInfo activity")
+            log("StayActive: ended ProcessInfo activity")
         }
     }
 
@@ -172,9 +183,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if result == kIOReturnSuccess {
             hasDisplaySleepAssertion = true
-            NSLog("StayActive: IOPMAssertion created (id=\(displaySleepAssertionID)) - display sleep blocked")
+            log("StayActive: IOPMAssertion created (id=\(displaySleepAssertionID)) - display sleep blocked")
         } else {
-            NSLog("StayActive: IOPMAssertionCreateWithName failed, IOReturn = \(result)")
+            log("StayActive: IOPMAssertionCreateWithName failed, IOReturn = \(result)")
         }
     }
 
@@ -182,14 +193,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard hasDisplaySleepAssertion else { return }
         let result = IOPMAssertionRelease(displaySleepAssertionID)
         hasDisplaySleepAssertion = false
-        NSLog("StayActive: IOPMAssertionRelease -> IOReturn = \(result)")
+        log("StayActive: IOPMAssertionRelease -> IOReturn = \(result)")
     }
 
     // MARK: - Periodic activity nudge
 
     private func startTimer() {
         timer?.invalidate()
-        NSLog("StayActive: starting nudge timer, interval = \(nudgeInterval)s")
+        log("StayActive: starting nudge timer, interval = \(nudgeInterval)s")
         timer = Timer.scheduledTimer(withTimeInterval: nudgeInterval, repeats: true) { [weak self] _ in
             self?.nudge()
         }
@@ -198,10 +209,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func nudge() {
-        NSLog("StayActive: nudge() called")
+        log("StayActive: nudge() called")
 
         guard let currentLocation = CGEvent(source: nil)?.location else {
-            NSLog("StayActive: nudge() could not read current mouse location")
+            log("StayActive: nudge() could not read current mouse location")
             return
         }
 
@@ -211,14 +222,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                   mouseCursorPosition: shiftedLocation, mouseButton: .left) {
             moveOut.post(tap: .cghidEventTap)
         } else {
-            NSLog("StayActive: nudge() failed to create mouse-move-out event")
+            log("StayActive: nudge() failed to create mouse-move-out event")
         }
 
         if let moveBack = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
                                    mouseCursorPosition: currentLocation, mouseButton: .left) {
             moveBack.post(tap: .cghidEventTap)
         } else {
-            NSLog("StayActive: nudge() failed to create mouse-move-back event")
+            log("StayActive: nudge() failed to create mouse-move-back event")
         }
 
         // keyCode 56 = Shift, no modifier flags, down+up. Invisible, no text is typed.
@@ -226,17 +237,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             keyDown.flags = []
             keyDown.post(tap: .cghidEventTap)
         } else {
-            NSLog("StayActive: nudge() failed to create key-down event")
+            log("StayActive: nudge() failed to create key-down event")
         }
 
         if let keyUp = CGEvent(keyboardEventSource: nil, virtualKey: 56, keyDown: false) {
             keyUp.flags = []
             keyUp.post(tap: .cghidEventTap)
         } else {
-            NSLog("StayActive: nudge() failed to create key-up event")
+            log("StayActive: nudge() failed to create key-up event")
         }
 
-        NSLog("StayActive: nudge() completed (mouse jiggle + shift key sent)")
+        log("StayActive: nudge() completed (mouse jiggle + shift key sent)")
     }
 }
 

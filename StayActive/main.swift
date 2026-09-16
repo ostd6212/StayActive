@@ -23,7 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var displaySleepAssertionID: IOPMAssertionID = 0
     private var hasDisplaySleepAssertion = false
 
-    private let nudgeInterval: TimeInterval = 20.0
+    private let nudgeInterval: TimeInterval = 60.0
 
     // MARK: - Schedule state
 

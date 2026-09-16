@@ -10,11 +10,8 @@ exist outside macOS.
 ## Setup (run once, in order)
 
 ```bash
-# 0. Put this folder where you want it
-mkdir -p ~/Documents/StayActive
-# copy main.swift, Info.plist, generate_icon.swift, build.sh, install.sh,
-# watch_logs.sh, setup_certificate.sh into ~/Documents/StayActive
-
+# 0. Clone the repo
+git clone https://github.com/ostd6212/StayActive.git ~/Documents/StayActive
 cd ~/Documents/StayActive
 
 # 1. Create the app icon (Dock/Finder icon)
@@ -79,10 +76,13 @@ certificate.
 
 ## Using the app
 
-- Menu bar icon: green circle = active (nudging every 60s + blocking
-  display sleep), gray = disabled.
-- Menu: **Disable** / **Enable** toggles it, **Settings…** opens the
-  schedule window, **Quit** quits.
+- Menu bar icon: a thin ring with a dot in the middle — green when
+  active (nudging every 60s + blocking display sleep), matches the
+  color of other menu bar icons (template image) when off.
+- Menu: **Start** / **Stop** toggles it, **Settings…** opens the
+  schedule window, **Quit** quits. The app always launches inactive;
+  you start it manually unless a schedule is enabled and the current
+  time falls inside its window.
 - **Settings…**: check "Run on a schedule" and pick a start/end time
   from the hour/minute dropdowns (5-minute steps) — the app then
   switches itself on/off at those times automatically, checked every
@@ -90,10 +90,11 @@ certificate.
   from the menu still works between
   schedule checks; the next scheduled boundary will re-apply the
   schedule's state. Settings persist in `UserDefaults` across restarts.
-- Every 20 seconds while active it moves the mouse 1px and back, and
+- Every 60 seconds while active it moves the mouse 1px and back, and
   sends a harmless Shift key down/up (keyCode 56, no modifiers) — enough
   to reset each app's own idle timer without typing or clicking anything
-  visible.
+  visible. If genuine (hardware) input happened in the last 5 seconds,
+  the nudge is skipped for that cycle since it isn't needed.
 - `ProcessInfo.beginActivity([.userInitiated, .idleSystemSleepDisabled])`
   disables App Nap for the process.
 - An `IOPMAssertionCreateWithName` assertion
@@ -106,7 +107,7 @@ certificate.
 |-----------------------|------------------------------------------------------|
 | `main.swift`          | The menu bar app                                    |
 | `Info.plist`          | Bundle metadata (`LSUIElement`, bundle id, etc.)    |
-| `generate_icon.swift` | Draws the `.iconset` PNGs (green circle + dot)      |
+| `generate_icon.swift` | Draws the `.iconset` PNGs (ring + dot on a dark backdrop) |
 | `setup_certificate.sh`| Creates & trusts the "StayActive Dev" cert via CLI  |
 | `build.sh`            | Compiles, bundles, and codesigns `StayActive.app`   |
 | `install.sh`          | Installs to `/Applications`, resets TCC, launches   |

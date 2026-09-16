@@ -205,6 +205,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ctx.setLineWidth(lineWidth)
         ctx.strokeEllipse(in: circleRect)
 
+        let dotDiameter: CGFloat = 4
+        let dotRect = NSRect(
+            x: (size.width - dotDiameter) / 2,
+            y: (size.height - dotDiameter) / 2,
+            width: dotDiameter,
+            height: dotDiameter
+        )
+        ctx.setFillColor(ringColor.cgColor)
+        ctx.fillEllipse(in: dotRect)
+
         image.isTemplate = !active
         return image
     }

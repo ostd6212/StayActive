@@ -27,8 +27,24 @@ openssl req -x509 -newkey rsa:2048 -keyout "$KEY_PATH" \
   -addext "basicConstraints=critical,CA:false"
 
 echo "==> Exporting to PKCS#12"
-openssl pkcs12 -export -out "$P12_PATH" -inkey "$KEY_PATH" \
-  -in "$CERT_PATH" -passout "pass:$P12_PASS"
+# OpenSSL 3.x defaults to AES-256/PBKDF2 for PKCS#12, which macOS's
+# Security framework importer cannot parse ("MAC verification failed
+# during PKCS12 import (wrong password?)" even with the correct
+# password). -legacy forces the old RC2/3DES encoding that `security
+# import` understands. Older OpenSSL/LibreSSL doesn't have -legacy (and
+# doesn't need it), so fall back if the flag is rejected.
+if ! openssl pkcs12 -export -out "$P12_PATH" -inkey "$KEY_PATH" \
+      -in "$CERT_PATH" -passout "pass:$P12_PASS" -legacy 2>/tmp/stayactive-pkcs12-err.log; then
+    if grep -qi "unknown option\|unrecognized" /tmp/stayactive-pkcs12-err.log; then
+        echo "    (-legacy not supported by this openssl, retrying without it)"
+        openssl pkcs12 -export -out "$P12_PATH" -inkey "$KEY_PATH" \
+          -in "$CERT_PATH" -passout "pass:$P12_PASS"
+    else
+        cat /tmp/stayactive-pkcs12-err.log
+        exit 1
+    fi
+fi
+rm -f /tmp/stayactive-pkcs12-err.log
 
 echo "==> Importing into login keychain"
 security import "$P12_PATH" -k "$KEYCHAIN" \

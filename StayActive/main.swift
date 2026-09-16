@@ -143,7 +143,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func toggleTitle() -> String {
-        return isActive ? "Disable" : "Enable"
+        return isActive ? "Stop" : "Start"
     }
 
     @objc private func toggleActive() {

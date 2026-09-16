@@ -25,23 +25,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private let nudgeInterval: TimeInterval = 20.0
 
+    // MARK: - Schedule state
+
+    private var scheduleCheckTimer: Timer?
+    private var settingsWindow: NSWindow?
+    private var scheduleEnabledCheckbox: NSButton?
+    private var startTimePicker: NSDatePicker?
+    private var endTimePicker: NSDatePicker?
+
+    private let defaults = UserDefaults.standard
+
+    private var scheduleEnabled: Bool {
+        get { defaults.bool(forKey: "scheduleEnabled") }
+        set { defaults.set(newValue, forKey: "scheduleEnabled") }
+    }
+
+    // Minutes since midnight. Defaults to 09:00-18:00 on first run.
+    private var scheduleStartMinutes: Int {
+        get {
+            defaults.object(forKey: "scheduleStartMinutes") != nil
+                ? defaults.integer(forKey: "scheduleStartMinutes") : 9 * 60
+        }
+        set { defaults.set(newValue, forKey: "scheduleStartMinutes") }
+    }
+
+    private var scheduleEndMinutes: Int {
+        get {
+            defaults.object(forKey: "scheduleEndMinutes") != nil
+                ? defaults.integer(forKey: "scheduleEndMinutes") : 18 * 60
+        }
+        set { defaults.set(newValue, forKey: "scheduleEndMinutes") }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         log("StayActive: applicationDidFinishLaunching - starting up")
 
         setupStatusItem()
         checkAccessibilityTrust()
         beginBackgroundActivity()
-        createDisplaySleepAssertion()
-        startTimer()
 
-        log("StayActive: startup complete, nudge interval = \(nudgeInterval)s")
+        if scheduleEnabled {
+            // Start "off" and let the first schedule check decide the real
+            // state, so evaluateSchedule() always sees a state change and
+            // actually starts the timer/assertion when launch happens
+            // inside the scheduled window.
+            isActive = false
+            statusItem.button?.image = makeStatusIcon(active: false)
+            statusItem.menu?.item(at: 0)?.title = toggleTitle()
+        } else {
+            createDisplaySleepAssertion()
+            startTimer()
+        }
+
+        startScheduleTimer()
+
+        log("StayActive: startup complete, nudge interval = \(nudgeInterval)s, scheduleEnabled = \(scheduleEnabled)")
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         log("StayActive: applicationWillTerminate - cleaning up")
         timer?.invalidate()
+        scheduleCheckTimer?.invalidate()
         endBackgroundActivity()
         releaseDisplaySleepAssertion()
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        return false
     }
 
     // MARK: - Status item / menu
@@ -65,6 +115,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
+        let settingsItem = NSMenuItem(
+            title: "Налаштування…",
+            action: #selector(openSettings),
+            keyEquivalent: ","
+        )
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+
+        menu.addItem(NSMenuItem.separator())
+
         let quitItem = NSMenuItem(
             title: "Вийти",
             action: #selector(quit),
@@ -83,8 +143,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func toggleActive() {
-        isActive.toggle()
-        log("StayActive: toggled, isActive = \(isActive)")
+        setActive(!isActive, reason: "manual toggle")
+    }
+
+    private func setActive(_ newValue: Bool, reason: String) {
+        guard newValue != isActive else { return }
+        isActive = newValue
+        log("StayActive: setActive(\(newValue)) reason=\(reason)")
 
         statusItem.button?.image = makeStatusIcon(active: isActive)
         statusItem.menu?.item(at: 0)?.title = toggleTitle()
@@ -248,6 +313,137 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         log("StayActive: nudge() completed (mouse jiggle + shift key sent)")
+    }
+
+    // MARK: - Schedule (auto on/off by time of day)
+
+    private func startScheduleTimer() {
+        scheduleCheckTimer?.invalidate()
+        scheduleCheckTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            self?.evaluateSchedule()
+        }
+        evaluateSchedule()
+    }
+
+    private func evaluateSchedule() {
+        guard scheduleEnabled else { return }
+
+        let now = Date()
+        let comps = Calendar.current.dateComponents([.hour, .minute], from: now)
+        let nowMinutes = (comps.hour ?? 0) * 60 + (comps.minute ?? 0)
+
+        let start = scheduleStartMinutes
+        let end = scheduleEndMinutes
+
+        let withinSchedule: Bool
+        if start == end {
+            withinSchedule = true
+        } else if start < end {
+            withinSchedule = nowMinutes >= start && nowMinutes < end
+        } else {
+            // Overnight range, e.g. 22:00 -> 06:00
+            withinSchedule = nowMinutes >= start || nowMinutes < end
+        }
+
+        if withinSchedule != isActive {
+            setActive(withinSchedule, reason: "schedule (\(nowMinutes) min, window \(start)-\(end))")
+        }
+    }
+
+    private func dateFromMinutes(_ minutes: Int) -> Date {
+        var comps = DateComponents()
+        comps.hour = minutes / 60
+        comps.minute = minutes % 60
+        return Calendar.current.date(from: comps) ?? Date()
+    }
+
+    private func minutesFromDate(_ date: Date) -> Int {
+        let comps = Calendar.current.dateComponents([.hour, .minute], from: date)
+        return (comps.hour ?? 0) * 60 + (comps.minute ?? 0)
+    }
+
+    // MARK: - Settings window
+
+    @objc private func openSettings() {
+        NSApp.activate(ignoringOtherApps: true)
+        if settingsWindow == nil {
+            buildSettingsWindow()
+        }
+        scheduleEnabledCheckbox?.state = scheduleEnabled ? .on : .off
+        startTimePicker?.dateValue = dateFromMinutes(scheduleStartMinutes)
+        endTimePicker?.dateValue = dateFromMinutes(scheduleEndMinutes)
+        settingsWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    private func buildSettingsWindow() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 320, height: 170),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "StayActive — Налаштування"
+        window.isReleasedWhenClosed = false
+        window.center()
+
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 170))
+
+        let checkbox = NSButton(
+            checkboxWithTitle: "Працювати за розкладом",
+            target: self,
+            action: #selector(scheduleCheckboxChanged)
+        )
+        checkbox.frame = NSRect(x: 20, y: 120, width: 280, height: 24)
+        content.addSubview(checkbox)
+        scheduleEnabledCheckbox = checkbox
+
+        let startLabel = NSTextField(labelWithString: "Початок:")
+        startLabel.frame = NSRect(x: 20, y: 78, width: 70, height: 24)
+        content.addSubview(startLabel)
+
+        let startPicker = NSDatePicker(frame: NSRect(x: 100, y: 74, width: 100, height: 28))
+        startPicker.datePickerElements = [.hourMinute]
+        startPicker.datePickerStyle = .textFieldAndStepper
+        content.addSubview(startPicker)
+        startTimePicker = startPicker
+
+        let endLabel = NSTextField(labelWithString: "Кінець:")
+        endLabel.frame = NSRect(x: 20, y: 38, width: 70, height: 24)
+        content.addSubview(endLabel)
+
+        let endPicker = NSDatePicker(frame: NSRect(x: 100, y: 34, width: 100, height: 28))
+        endPicker.datePickerElements = [.hourMinute]
+        endPicker.datePickerStyle = .textFieldAndStepper
+        content.addSubview(endPicker)
+        endTimePicker = endPicker
+
+        let saveButton = NSButton(title: "Зберегти", target: self, action: #selector(saveSettings))
+        saveButton.frame = NSRect(x: 210, y: 15, width: 90, height: 32)
+        saveButton.bezelStyle = .rounded
+        saveButton.keyEquivalent = "\r"
+        content.addSubview(saveButton)
+
+        window.contentView = content
+        settingsWindow = window
+    }
+
+    @objc private func scheduleCheckboxChanged() {
+        // Applied on Save, this just reflects immediate UI state.
+    }
+
+    @objc private func saveSettings() {
+        scheduleEnabled = (scheduleEnabledCheckbox?.state == .on)
+        if let start = startTimePicker?.dateValue {
+            scheduleStartMinutes = minutesFromDate(start)
+        }
+        if let end = endTimePicker?.dateValue {
+            scheduleEndMinutes = minutesFromDate(end)
+        }
+
+        log("StayActive: schedule settings saved, enabled=\(scheduleEnabled), start=\(scheduleStartMinutes)min, end=\(scheduleEndMinutes)min")
+
+        settingsWindow?.close()
+        evaluateSchedule()
     }
 }
 

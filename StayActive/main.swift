@@ -263,13 +263,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Periodic activity nudge
 
+    // If there was genuine (hardware) mouse/keyboard input more recently than
+    // this, skip the synthetic nudge — it's not needed (the real input
+    // already reset every app's idle timer) and skipping makes a collision
+    // between our synthetic event and real input impossible by construction.
+    private let collisionAvoidWindow: TimeInterval = 5.0
+
     private func startTimer() {
         timer?.invalidate()
         log("StayActive: starting nudge timer, interval = \(nudgeInterval)s")
         timer = Timer.scheduledTimer(withTimeInterval: nudgeInterval, repeats: true) { [weak self] _ in
-            self?.nudge()
+            self?.nudgeIfNeeded()
         }
         // Fire once immediately so status is refreshed right away.
+        nudgeIfNeeded()
+    }
+
+    private func secondsSinceLastRealInput() -> TimeInterval {
+        // .hidSystemState reflects only genuine hardware-generated events,
+        // so our own synthetic nudges (posted via .cghidEventTap) never
+        // count here — this is real physical activity only.
+        return CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: CGEventType(rawValue: ~0)!)
+    }
+
+    private func nudgeIfNeeded() {
+        let idle = secondsSinceLastRealInput()
+        if idle < collisionAvoidWindow {
+            log("StayActive: skipping nudge, real input was \(String(format: "%.1f", idle))s ago")
+            return
+        }
         nudge()
     }
 

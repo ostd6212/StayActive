@@ -184,9 +184,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         guard let ctx = NSGraphicsContext.current?.cgContext else { return image }
 
+        // Off state is drawn as a template image, so macOS tints it exactly
+        // like every other menu bar icon (black/white, adapts automatically
+        // to light/dark mode and menu bar highlighting). The active state
+        // needs an explicit green, so it can't be a template image.
         let ringColor: NSColor = active
             ? NSColor(calibratedRed: 0.20, green: 0.78, blue: 0.35, alpha: 1.0)
-            : NSColor(calibratedWhite: 0.55, alpha: 1.0)
+            : NSColor.black
 
         let lineWidth: CGFloat = 1.6
         let inset = lineWidth / 2 + 1
@@ -201,7 +205,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ctx.setLineWidth(lineWidth)
         ctx.strokeEllipse(in: circleRect)
 
-        image.isTemplate = false
+        image.isTemplate = !active
         return image
     }
 

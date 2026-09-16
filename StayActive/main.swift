@@ -205,7 +205,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ctx.setLineWidth(lineWidth)
         ctx.strokeEllipse(in: circleRect)
 
-        let dotDiameter: CGFloat = 4
+        let dotDiameter: CGFloat = 7
         let dotRect = NSRect(
             x: (size.width - dotDiameter) / 2,
             y: (size.height - dotDiameter) / 2,

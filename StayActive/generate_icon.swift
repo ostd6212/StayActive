@@ -1,7 +1,8 @@
 import Cocoa
 
-// Generates icon.iconset/ with all standard sizes: green circle with a
-// darker green dot in the center. Run on macOS: swift generate_icon.swift
+// Generates icon.iconset/ with all standard sizes: a thin green ring with a
+// bold green dot in the center, matching the menu bar icon's design.
+// Run on macOS: swift generate_icon.swift
 // Then: iconutil -c icns icon.iconset
 
 let sizes: [(Int, String)] = [
@@ -38,15 +39,23 @@ func drawIcon(size: Int) -> NSBitmapImageRep {
     let cg = ctx!.cgContext
 
     let s = CGFloat(size)
-    let margin = s * 0.05
-    let circleRect = CGRect(x: margin, y: margin, width: s - margin * 2, height: s - margin * 2)
+    let green = NSColor(calibratedRed: 0.20, green: 0.78, blue: 0.35, alpha: 1.0).cgColor
 
-    cg.setFillColor(NSColor(calibratedRed: 0.20, green: 0.78, blue: 0.35, alpha: 1.0).cgColor)
-    cg.fillEllipse(in: circleRect)
+    let lineWidth = s * 0.055
+    let margin = s * 0.09
+    let circleRect = CGRect(
+        x: margin,
+        y: margin,
+        width: s - margin * 2,
+        height: s - margin * 2
+    )
+    cg.setStrokeColor(green)
+    cg.setLineWidth(lineWidth)
+    cg.strokeEllipse(in: circleRect)
 
-    let dotSize = s * 0.32
+    let dotSize = s * 0.34
     let dotRect = CGRect(x: (s - dotSize) / 2, y: (s - dotSize) / 2, width: dotSize, height: dotSize)
-    cg.setFillColor(NSColor(calibratedRed: 0.0, green: 0.45, blue: 0.10, alpha: 1.0).cgColor)
+    cg.setFillColor(green)
     cg.fillEllipse(in: dotRect)
 
     NSGraphicsContext.restoreGraphicsState()

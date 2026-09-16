@@ -40,9 +40,23 @@ func drawIcon(size: Int) -> NSBitmapImageRep {
 
     let s = CGFloat(size)
     let green = NSColor(calibratedRed: 0.20, green: 0.78, blue: 0.35, alpha: 1.0).cgColor
+    let background = NSColor(calibratedRed: 0.11, green: 0.12, blue: 0.13, alpha: 1.0).cgColor
 
-    let lineWidth = s * 0.055
-    let margin = s * 0.09
+    // macOS-style rounded-square backdrop so the icon has its own contrast
+    // instead of relying on Finder's transparent-icon placeholder.
+    let cornerRadius = s * 0.224
+    let bgPath = CGPath(
+        roundedRect: CGRect(x: 0, y: 0, width: s, height: s),
+        cornerWidth: cornerRadius,
+        cornerHeight: cornerRadius,
+        transform: nil
+    )
+    cg.addPath(bgPath)
+    cg.setFillColor(background)
+    cg.fillPath()
+
+    let lineWidth = s * 0.045
+    let margin = s * 0.22
     let circleRect = CGRect(
         x: margin,
         y: margin,
@@ -53,7 +67,7 @@ func drawIcon(size: Int) -> NSBitmapImageRep {
     cg.setLineWidth(lineWidth)
     cg.strokeEllipse(in: circleRect)
 
-    let dotSize = s * 0.34
+    let dotSize = s * 0.26
     let dotRect = CGRect(x: (s - dotSize) / 2, y: (s - dotSize) / 2, width: dotSize, height: dotSize)
     cg.setFillColor(green)
     cg.fillEllipse(in: dotRect)

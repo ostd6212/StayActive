@@ -17,7 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var statusItem: NSStatusItem!
     private var timer: Timer?
-    private var isActive = true
+    private var isActive = false
 
     private var activityToken: NSObjectProtocol?
     private var displaySleepAssertionID: IOPMAssertionID = 0
@@ -68,19 +68,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         checkAccessibilityTrust()
         beginBackgroundActivity()
 
-        if scheduleEnabled {
-            // Start "off" and let the first schedule check decide the real
-            // state, so evaluateSchedule() always sees a state change and
-            // actually starts the timer/assertion when launch happens
-            // inside the scheduled window.
-            isActive = false
-            statusItem.button?.image = makeStatusIcon(active: false)
-            statusItem.menu?.item(at: 0)?.title = toggleTitle()
-        } else {
-            createDisplaySleepAssertion()
-            startTimer()
-        }
-
+        // Always start inactive (gray). If a schedule is enabled, the first
+        // check below will immediately turn it on when launch happens to
+        // fall inside the configured window; otherwise the user starts it
+        // manually from the menu.
         startScheduleTimer()
 
         log("StayActive: startup complete, nudge interval = \(nudgeInterval)s, scheduleEnabled = \(scheduleEnabled)")

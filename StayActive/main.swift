@@ -184,27 +184,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         guard let ctx = NSGraphicsContext.current?.cgContext else { return image }
 
-        let mainColor: NSColor = active
+        let ringColor: NSColor = active
             ? NSColor(calibratedRed: 0.20, green: 0.78, blue: 0.35, alpha: 1.0)
-            : NSColor(calibratedWhite: 0.6, alpha: 1.0)
+            : NSColor(calibratedWhite: 0.55, alpha: 1.0)
 
-        let dotColor: NSColor = active
-            ? NSColor(calibratedRed: 0.0, green: 0.45, blue: 0.10, alpha: 1.0)
-            : NSColor(calibratedWhite: 0.35, alpha: 1.0)
-
-        let circleRect = NSRect(x: 1, y: 1, width: 16, height: 16)
-        ctx.setFillColor(mainColor.cgColor)
-        ctx.fillEllipse(in: circleRect)
-
-        let dotDiameter: CGFloat = 6
-        let dotRect = NSRect(
-            x: (size.width - dotDiameter) / 2,
-            y: (size.height - dotDiameter) / 2,
-            width: dotDiameter,
-            height: dotDiameter
+        let lineWidth: CGFloat = 1.6
+        let inset = lineWidth / 2 + 1
+        let circleRect = NSRect(
+            x: inset,
+            y: inset,
+            width: size.width - inset * 2,
+            height: size.height - inset * 2
         )
-        ctx.setFillColor(dotColor.cgColor)
-        ctx.fillEllipse(in: dotRect)
+
+        ctx.setStrokeColor(ringColor.cgColor)
+        ctx.setLineWidth(lineWidth)
+        ctx.strokeEllipse(in: circleRect)
 
         image.isTemplate = false
         return image

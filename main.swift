@@ -28,9 +28,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Schedule state
 
     private var scheduleCheckTimer: Timer?
-    private var scheduleStatusItem: NSMenuItem?
-    private var settingsWindow: NSWindow?
-    private var scheduleEnabledCheckbox: NSButton?
+
+    private var scheduleLabelField: NSTextField?
+    private var scheduleRowItem: NSMenuItem?
+    private var startRowItem: NSMenuItem?
+    private var endRowItem: NSMenuItem?
+    private var saveRowItem: NSMenuItem?
     private var startHourPopup: NSPopUpButton?
     private var startMinutePopup: NSPopUpButton?
     private var endHourPopup: NSPopUpButton?
@@ -109,20 +112,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         toggleItem.target = self
         menu.addItem(toggleItem)
 
-        let scheduleLine = NSMenuItem(title: scheduleStatusTitle(), action: nil, keyEquivalent: "")
-        scheduleLine.isEnabled = false
-        menu.addItem(scheduleLine)
-        scheduleStatusItem = scheduleLine
+        menu.addItem(buildScheduleSwitchRow())
 
-        menu.addItem(NSMenuItem.separator())
-
-        let settingsItem = NSMenuItem(
-            title: "Settings…",
-            action: #selector(openSettings),
-            keyEquivalent: ","
-        )
-        settingsItem.target = self
-        menu.addItem(settingsItem)
+        if scheduleEnabled {
+            insertScheduleEditingRows(into: menu)
+        }
 
         menu.addItem(NSMenuItem.separator())
 
@@ -147,9 +141,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         String(format: "%02d:%02d", minutes / 60, minutes % 60)
     }
 
-    private func scheduleStatusTitle() -> String {
-        guard scheduleEnabled else { return "Schedule: Off" }
-        return "Schedule: \(formatMinutes(scheduleStartMinutes))–\(formatMinutes(scheduleEndMinutes))"
+    private func scheduleLabelText() -> String {
+        guard scheduleEnabled else { return "Schedule" }
+        return "Schedule (\(formatMinutes(scheduleStartMinutes))–\(formatMinutes(scheduleEndMinutes)))"
     }
 
     @objc private func toggleActive() {
@@ -391,27 +385,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    // MARK: - Settings window
+    // MARK: - Inline schedule menu rows
 
-    @objc private func openSettings() {
-        NSApp.activate(ignoringOtherApps: true)
-        if settingsWindow == nil {
-            buildSettingsWindow()
-        }
-        scheduleEnabledCheckbox?.state = scheduleEnabled ? .on : .off
-        selectTime(scheduleStartMinutes, hourPopup: startHourPopup, minutePopup: startMinutePopup)
-        selectTime(scheduleEndMinutes, hourPopup: endHourPopup, minutePopup: endMinutePopup)
-        settingsWindow?.makeKeyAndOrderFront(nil)
+    private let rowWidth: CGFloat = 210
+
+    private func buildScheduleSwitchRow() -> NSMenuItem {
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: rowWidth, height: 26))
+
+        let label = NSTextField(labelWithString: scheduleLabelText())
+        label.frame = NSRect(x: 14, y: 4, width: rowWidth - 14 - 46, height: 18)
+        label.lineBreakMode = .byTruncatingTail
+        container.addSubview(label)
+        scheduleLabelField = label
+
+        let toggle = NSSwitch(frame: NSRect(x: rowWidth - 46, y: 1, width: 38, height: 24))
+        toggle.state = scheduleEnabled ? .on : .off
+        toggle.target = self
+        toggle.action = #selector(scheduleSwitchToggled(_:))
+        container.addSubview(toggle)
+
+        let item = NSMenuItem()
+        item.view = container
+        scheduleRowItem = item
+        return item
     }
 
-    private func makeHourPopup(frame: NSRect) -> NSPopUpButton {
-        let popup = NSPopUpButton(frame: frame, pullsDown: false)
+    private func makeHourPopup() -> NSPopUpButton {
+        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
         popup.addItems(withTitles: (0..<24).map { String(format: "%02d", $0) })
         return popup
     }
 
-    private func makeMinutePopup(frame: NSRect) -> NSPopUpButton {
-        let popup = NSPopUpButton(frame: frame, pullsDown: false)
+    private func makeMinutePopup() -> NSPopUpButton {
+        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
         popup.addItems(withTitles: stride(from: 0, to: 60, by: minuteStep).map { String(format: "%02d", $0) })
         return popup
     }
@@ -430,79 +436,102 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return hour * 60 + minuteIndex * minuteStep
     }
 
-    private func buildSettingsWindow() {
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 320, height: 200),
-            styleMask: [.titled, .closable],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = "StayActive — Settings"
-        window.isReleasedWhenClosed = false
-        window.center()
+    private func makeTimeRowItem(label labelText: String, minutes: Int, isStart: Bool) -> NSMenuItem {
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: rowWidth, height: 30))
 
-        let content = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 200))
+        let label = NSTextField(labelWithString: labelText)
+        label.frame = NSRect(x: 14, y: 6, width: 40, height: 18)
+        container.addSubview(label)
 
-        let checkbox = NSButton(
-            checkboxWithTitle: "Run on a schedule",
-            target: self,
-            action: nil
-        )
-        checkbox.frame = NSRect(x: 20, y: 155, width: 280, height: 24)
-        content.addSubview(checkbox)
-        scheduleEnabledCheckbox = checkbox
+        let hourPopup = makeHourPopup()
+        hourPopup.frame = NSRect(x: 58, y: 2, width: 58, height: 26)
+        container.addSubview(hourPopup)
 
-        let startLabel = NSTextField(labelWithString: "Start:")
-        startLabel.frame = NSRect(x: 20, y: 111, width: 50, height: 24)
-        content.addSubview(startLabel)
+        let colon = NSTextField(labelWithString: ":")
+        colon.frame = NSRect(x: 118, y: 6, width: 10, height: 18)
+        container.addSubview(colon)
 
-        let startHour = makeHourPopup(frame: NSRect(x: 75, y: 107, width: 62, height: 26))
-        content.addSubview(startHour)
-        startHourPopup = startHour
+        let minutePopup = makeMinutePopup()
+        minutePopup.frame = NSRect(x: 130, y: 2, width: 58, height: 26)
+        container.addSubview(minutePopup)
 
-        let startColon = NSTextField(labelWithString: ":")
-        startColon.frame = NSRect(x: 140, y: 111, width: 12, height: 24)
-        content.addSubview(startColon)
+        selectTime(minutes, hourPopup: hourPopup, minutePopup: minutePopup)
 
-        let startMinute = makeMinutePopup(frame: NSRect(x: 155, y: 107, width: 62, height: 26))
-        content.addSubview(startMinute)
-        startMinutePopup = startMinute
+        if isStart {
+            startHourPopup = hourPopup
+            startMinutePopup = minutePopup
+        } else {
+            endHourPopup = hourPopup
+            endMinutePopup = minutePopup
+        }
 
-        let endLabel = NSTextField(labelWithString: "End:")
-        endLabel.frame = NSRect(x: 20, y: 71, width: 50, height: 24)
-        content.addSubview(endLabel)
-
-        let endHour = makeHourPopup(frame: NSRect(x: 75, y: 67, width: 62, height: 26))
-        content.addSubview(endHour)
-        endHourPopup = endHour
-
-        let endColon = NSTextField(labelWithString: ":")
-        endColon.frame = NSRect(x: 140, y: 71, width: 12, height: 24)
-        content.addSubview(endColon)
-
-        let endMinute = makeMinutePopup(frame: NSRect(x: 155, y: 67, width: 62, height: 26))
-        content.addSubview(endMinute)
-        endMinutePopup = endMinute
-
-        let saveButton = NSButton(title: "Save", target: self, action: #selector(saveSettings))
-        saveButton.frame = NSRect(x: 210, y: 15, width: 90, height: 32)
-        saveButton.bezelStyle = .rounded
-        saveButton.keyEquivalent = "\r"
-        content.addSubview(saveButton)
-
-        window.contentView = content
-        settingsWindow = window
+        let item = NSMenuItem()
+        item.view = container
+        return item
     }
 
-    @objc private func saveSettings() {
-        scheduleEnabled = (scheduleEnabledCheckbox?.state == .on)
+    private func insertScheduleEditingRows(into menu: NSMenu) {
+        guard startRowItem == nil else { return }
+
+        let startIndex: Int
+        if let scheduleRowItem, menu.items.contains(scheduleRowItem) {
+            startIndex = menu.index(of: scheduleRowItem) + 1
+        } else {
+            startIndex = menu.items.count
+        }
+
+        let startItem = makeTimeRowItem(label: "Start", minutes: scheduleStartMinutes, isStart: true)
+        menu.insertItem(startItem, at: startIndex)
+        startRowItem = startItem
+
+        let endItem = makeTimeRowItem(label: "End", minutes: scheduleEndMinutes, isStart: false)
+        menu.insertItem(endItem, at: startIndex + 1)
+        endRowItem = endItem
+
+        let saveItem = NSMenuItem(title: "Save", action: #selector(saveSchedule), keyEquivalent: "")
+        saveItem.target = self
+        menu.insertItem(saveItem, at: startIndex + 2)
+        saveRowItem = saveItem
+    }
+
+    private func removeScheduleEditingRows(from menu: NSMenu) {
+        for item in [startRowItem, endRowItem, saveRowItem] {
+            if let item, menu.items.contains(item) {
+                menu.removeItem(item)
+            }
+        }
+        startRowItem = nil
+        endRowItem = nil
+        saveRowItem = nil
+        startHourPopup = nil
+        startMinutePopup = nil
+        endHourPopup = nil
+        endMinutePopup = nil
+    }
+
+    @objc private func scheduleSwitchToggled(_ sender: NSSwitch) {
+        scheduleEnabled = (sender.state == .on)
+        scheduleLabelField?.stringValue = scheduleLabelText()
+        log("StayActive: schedule toggled, enabled=\(scheduleEnabled)")
+
+        if let menu = statusItem.menu {
+            if scheduleEnabled {
+                insertScheduleEditingRows(into: menu)
+            } else {
+                removeScheduleEditingRows(from: menu)
+            }
+        }
+
+        evaluateSchedule()
+    }
+
+    @objc private func saveSchedule() {
         scheduleStartMinutes = readTime(hourPopup: startHourPopup, minutePopup: startMinutePopup)
         scheduleEndMinutes = readTime(hourPopup: endHourPopup, minutePopup: endMinutePopup)
 
-        log("StayActive: schedule settings saved, enabled=\(scheduleEnabled), start=\(scheduleStartMinutes)min, end=\(scheduleEndMinutes)min")
+        log("StayActive: schedule saved, start=\(scheduleStartMinutes)min, end=\(scheduleEndMinutes)min")
 
-        scheduleStatusItem?.title = scheduleStatusTitle()
-        settingsWindow?.close()
+        scheduleLabelField?.stringValue = scheduleLabelText()
         evaluateSchedule()
     }
 }

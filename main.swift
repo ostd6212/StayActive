@@ -405,21 +405,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // (confirmed live: the dropdowns didn't respond to clicks at all).
     // NSStepper doesn't have this problem since it never presents a menu of
     // its own, so hour/minute are click-to-increment/decrement instead.
-    private let rowWidth: CGFloat = 260
+    private let rowWidth: CGFloat = 200
 
     private let hourStepperTag = 1
     private let minuteStepperTag = 2
 
     private func buildScheduleSwitchRow() -> NSMenuItem {
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: rowWidth, height: 26))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: rowWidth, height: 24))
 
         let label = NSTextField(labelWithString: scheduleLabelText())
-        label.frame = NSRect(x: 14, y: 4, width: rowWidth - 14 - 46, height: 18)
+        label.font = .systemFont(ofSize: 13, weight: .medium)
+        label.frame = NSRect(x: 14, y: 3, width: rowWidth - 14 - 42, height: 18)
         label.lineBreakMode = .byTruncatingTail
         container.addSubview(label)
         scheduleLabelField = label
 
-        let toggle = NSSwitch(frame: NSRect(x: rowWidth - 46, y: 1, width: 38, height: 24))
+        let toggle = NSSwitch(frame: NSRect(x: rowWidth - 40, y: 2, width: 32, height: 19))
+        toggle.controlSize = .small
         toggle.state = scheduleEnabled ? .on : .off
         toggle.target = self
         toggle.action = #selector(scheduleSwitchToggled(_:))
@@ -434,7 +436,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func makeValueField(_ text: String) -> NSTextField {
         let field = NSTextField(labelWithString: text)
         field.alignment = .center
-        field.font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular)
+        field.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
         return field
     }
 
@@ -455,20 +457,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func makeTimeRowItem(label labelText: String, minutes: Int, isStart: Bool) -> NSMenuItem {
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: rowWidth, height: 30))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: rowWidth, height: 24))
 
         let label = NSTextField(labelWithString: labelText)
-        label.frame = NSRect(x: 14, y: 6, width: 40, height: 18)
+        label.font = .systemFont(ofSize: 12, weight: .regular)
+        label.textColor = .secondaryLabelColor
+        label.frame = NSRect(x: 14, y: 4, width: 34, height: 16)
         container.addSubview(label)
 
         let hour = minutes / 60
         let minute = minutes % 60
 
         let hourField = makeValueField(String(format: "%02d", hour))
-        hourField.frame = NSRect(x: 60, y: 6, width: 26, height: 18)
+        hourField.frame = NSRect(x: 50, y: 4, width: 20, height: 16)
         container.addSubview(hourField)
 
-        let hourStepper = NSStepper(frame: NSRect(x: 88, y: 2, width: 19, height: 27))
+        let hourStepper = NSStepper(frame: NSRect(x: 72, y: 2, width: 13, height: 19))
+        hourStepper.controlSize = .mini
         hourStepper.minValue = 0
         hourStepper.maxValue = 23
         hourStepper.increment = 1
@@ -480,14 +485,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         container.addSubview(hourStepper)
 
         let colon = NSTextField(labelWithString: ":")
-        colon.frame = NSRect(x: 112, y: 6, width: 10, height: 18)
+        colon.font = .systemFont(ofSize: 12, weight: .regular)
+        colon.textColor = .secondaryLabelColor
+        colon.frame = NSRect(x: 88, y: 4, width: 8, height: 16)
         container.addSubview(colon)
 
         let minuteField = makeValueField(String(format: "%02d", minute))
-        minuteField.frame = NSRect(x: 124, y: 6, width: 26, height: 18)
+        minuteField.frame = NSRect(x: 98, y: 4, width: 20, height: 16)
         container.addSubview(minuteField)
 
-        let minuteStepper = NSStepper(frame: NSRect(x: 152, y: 2, width: 19, height: 27))
+        let minuteStepper = NSStepper(frame: NSRect(x: 120, y: 2, width: 13, height: 19))
+        minuteStepper.controlSize = .mini
         minuteStepper.minValue = 0
         minuteStepper.maxValue = 55
         minuteStepper.increment = Double(minuteStep)
@@ -537,13 +545,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func buildSaveButtonRow() -> NSMenuItem {
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: rowWidth, height: 34))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: rowWidth, height: 28))
 
         let button = NSButton(title: "Save", target: self, action: #selector(saveSchedule))
         button.bezelStyle = .rounded
-        button.controlSize = .regular
-        let fittingWidth = max(button.fittingSize.width, 90)
-        button.frame = NSRect(x: (rowWidth - fittingWidth) / 2, y: 3, width: fittingWidth, height: 26)
+        button.controlSize = .small
+        button.font = .systemFont(ofSize: 12, weight: .regular)
+        let fittingWidth = max(button.fittingSize.width, 76)
+        button.frame = NSRect(x: (rowWidth - fittingWidth) / 2, y: 2, width: fittingWidth, height: 22)
         container.addSubview(button)
 
         let item = NSMenuItem()

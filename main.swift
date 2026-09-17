@@ -258,12 +258,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
         guard let ctx = NSGraphicsContext.current?.cgContext else { return image }
 
-        // Whole-number inset/line width so the circle's bounds land on
-        // exact pixel boundaries in the 18x18 canvas -- fractional values
-        // (the previous 1.8 inset) still resolve mathematically centered,
-        // but the resulting sub-pixel anti-aliasing at such a tiny size can
-        // read as visually off-center.
-        let lineWidth: CGFloat = 2
+        // Whole-number inset so the circle's bounds land on exact pixel
+        // boundaries in the 18x18 canvas -- a fractional inset (the
+        // previous 1.8) still resolves mathematically centered, but the
+        // resulting sub-pixel anti-aliasing at such a tiny size can read as
+        // visually off-center. Line width is independent of this and can
+        // be any thickness without affecting centering, since the stroke
+        // is applied symmetrically around the (already-centered) path.
+        let lineWidth: CGFloat = 1.2
         let inset: CGFloat = 2
         let circleRect = NSRect(
             x: inset,

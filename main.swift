@@ -141,8 +141,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
                 dot.centerXAnchor.constraint(equalTo: ring.centerXAnchor),
                 dot.centerYAnchor.constraint(equalTo: ring.centerYAnchor),
-                dot.widthAnchor.constraint(equalToConstant: 7),
-                dot.heightAnchor.constraint(equalToConstant: 7),
+                dot.widthAnchor.constraint(equalToConstant: 6),
+                dot.heightAnchor.constraint(equalToConstant: 6),
             ])
             dotView = dot
         }
@@ -258,8 +258,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
         guard let ctx = NSGraphicsContext.current?.cgContext else { return image }
 
-        let lineWidth: CGFloat = 1.6
-        let inset = lineWidth / 2 + 1
+        // Whole-number inset/line width so the circle's bounds land on
+        // exact pixel boundaries in the 18x18 canvas -- fractional values
+        // (the previous 1.8 inset) still resolve mathematically centered,
+        // but the resulting sub-pixel anti-aliasing at such a tiny size can
+        // read as visually off-center.
+        let lineWidth: CGFloat = 2
+        let inset: CGFloat = 2
         let circleRect = NSRect(
             x: inset,
             y: inset,
@@ -280,7 +285,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     // the same native-colored icon; explicit green, non-template, only
     // while active.
     private func makeDotImage(active: Bool) -> NSImage {
-        let size = NSSize(width: 7, height: 7)
+        // Even-numbered size: centering a 6pt view in an 18pt one lands on
+        // a whole number (6pt margin each side); an odd 7 landed on a
+        // fractional 5.5pt margin.
+        let size = NSSize(width: 6, height: 6)
         let image = NSImage(size: size)
 
         image.lockFocus()

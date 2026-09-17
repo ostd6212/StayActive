@@ -429,6 +429,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         title.frame = NSRect(x: 14, y: 20, width: rowWidth - 14 - 55, height: 18)
         container.addSubview(title)
 
+        // Time range on its own line below "Schedule" -- squeezing both
+        // onto one line next to the switch made long ranges get truncated.
+        // Width is capped the same way as the title above so this label's
+        // frame doesn't extend under the switch: a non-interactive label
+        // still captures clicks over any area its frame covers, and since
+        // it used to span the full row width, it sat on top of the switch's
+        // bottom half and silently swallowed clicks meant for it.
+        let subtitle = NSTextField(labelWithString: scheduleSubtitleText())
+        subtitle.font = .systemFont(ofSize: 11, weight: .regular)
+        subtitle.textColor = .secondaryLabelColor
+        subtitle.frame = NSRect(x: 14, y: 4, width: rowWidth - 14 - 55, height: 14)
+        container.addSubview(subtitle)
+        scheduleLabelField = subtitle
+
         let toggle = NSSwitch()
         toggle.controlSize = .small
         toggle.state = scheduleEnabled ? .on : .off
@@ -436,25 +450,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         toggle.action = #selector(scheduleSwitchToggled(_:))
         // sizeToFit before positioning: a frame that doesn't exactly match
         // NSSwitch's real intrinsic size leaves a dead margin around the
-        // visible pill that doesn't respond to clicks (confirmed live: it
-        // only registered clicks dead in the center). Positioning from the
+        // visible pill that doesn't respond to clicks. Positioning from the
         // fitted size guarantees the visible switch and its clickable area
-        // are the same rect.
+        // are the same rect. Added last so it's topmost and nothing else
+        // in this view can shadow its clicks.
         toggle.sizeToFit()
         toggle.setFrameOrigin(NSPoint(
             x: rowWidth - 14 - toggle.frame.width,
             y: (container.frame.height / 2 - toggle.frame.height / 2).rounded()
         ))
         container.addSubview(toggle)
-
-        // Time range on its own line below "Schedule" -- squeezing both
-        // onto one line next to the switch made long ranges get truncated.
-        let subtitle = NSTextField(labelWithString: scheduleSubtitleText())
-        subtitle.font = .systemFont(ofSize: 11, weight: .regular)
-        subtitle.textColor = .secondaryLabelColor
-        subtitle.frame = NSRect(x: 14, y: 4, width: rowWidth - 28, height: 14)
-        container.addSubview(subtitle)
-        scheduleLabelField = subtitle
 
         let item = NSMenuItem()
         item.view = container

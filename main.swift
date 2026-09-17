@@ -426,14 +426,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
         let title = NSTextField(labelWithString: "Schedule")
         title.font = .systemFont(ofSize: 13, weight: .medium)
-        title.frame = NSRect(x: 14, y: 20, width: rowWidth - 14 - 42, height: 18)
+        title.frame = NSRect(x: 14, y: 20, width: rowWidth - 14 - 55, height: 18)
         container.addSubview(title)
 
-        let toggle = NSSwitch(frame: NSRect(x: rowWidth - 40, y: 10, width: 32, height: 19))
+        let toggle = NSSwitch()
         toggle.controlSize = .small
         toggle.state = scheduleEnabled ? .on : .off
         toggle.target = self
         toggle.action = #selector(scheduleSwitchToggled(_:))
+        // sizeToFit before positioning: a frame that doesn't exactly match
+        // NSSwitch's real intrinsic size leaves a dead margin around the
+        // visible pill that doesn't respond to clicks (confirmed live: it
+        // only registered clicks dead in the center). Positioning from the
+        // fitted size guarantees the visible switch and its clickable area
+        // are the same rect.
+        toggle.sizeToFit()
+        toggle.setFrameOrigin(NSPoint(
+            x: rowWidth - 14 - toggle.frame.width,
+            y: (container.frame.height / 2 - toggle.frame.height / 2).rounded()
+        ))
         container.addSubview(toggle)
 
         // Time range on its own line below "Schedule" -- squeezing both
@@ -483,27 +494,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     private func makeTimeRowItem(label labelText: String, minutes: Int, isStart: Bool) -> NSMenuItem {
         let container = NSView(frame: NSRect(x: 0, y: 0, width: rowWidth, height: 26))
 
+        // Content block (label + fields) is centered in the row so it lines
+        // up with the Save button below, which is also row-centered --
+        // left-aligning just this row while Save centers under the full
+        // width made the whole block look crooked/off-axis.
         let label = NSTextField(labelWithString: labelText)
         label.font = .systemFont(ofSize: 12, weight: .regular)
         label.textColor = .secondaryLabelColor
-        label.frame = NSRect(x: 14, y: 5, width: 34, height: 16)
+        label.frame = NSRect(x: 40, y: 5, width: 34, height: 16)
         container.addSubview(label)
 
         let hour = minutes / 60
         let minute = minutes % 60
 
         let hourField = makeValueField(String(format: "%02d", hour), tag: hourFieldTag)
-        hourField.frame = NSRect(x: 54, y: 3, width: 32, height: 20)
+        hourField.frame = NSRect(x: 80, y: 3, width: 32, height: 20)
         container.addSubview(hourField)
 
         let colon = NSTextField(labelWithString: ":")
         colon.font = .systemFont(ofSize: 12, weight: .regular)
         colon.textColor = .secondaryLabelColor
-        colon.frame = NSRect(x: 90, y: 5, width: 8, height: 16)
+        colon.frame = NSRect(x: 116, y: 5, width: 8, height: 16)
         container.addSubview(colon)
 
         let minuteField = makeValueField(String(format: "%02d", minute), tag: minuteFieldTag)
-        minuteField.frame = NSRect(x: 102, y: 3, width: 32, height: 20)
+        minuteField.frame = NSRect(x: 128, y: 3, width: 32, height: 20)
         container.addSubview(minuteField)
 
         if isStart {

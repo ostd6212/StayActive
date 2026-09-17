@@ -79,15 +79,15 @@ certificate.
 - Menu bar icon: a thin ring with a dot in the middle — green when
   active (nudging every 60s + blocking display sleep), matches the
   color of other menu bar icons (template image) when off.
-- Menu: **Start** / **Stop** toggles it, **Settings…** opens the
-  schedule window, **Quit** quits. The app always launches inactive;
-  you start it manually unless a schedule is enabled and the current
-  time falls inside its window.
-- **Settings…**: check "Run on a schedule" and pick a start/end time
-  from the hour/minute dropdowns (5-minute steps) — the app then
-  switches itself on/off at those times automatically, checked every
-  30s. Overnight ranges work too (e.g. 22:00–06:00). Manual toggling
-  from the menu still works between
+- Menu: **Start** / **Stop** toggles it, **Quit** quits. The app always
+  launches inactive; you start it manually unless a schedule is enabled
+  and the current time falls inside its window.
+- **Schedule row**: a switch right in the menu turns the schedule on/off.
+  Flipping it on inserts Start/End hour-minute dropdown rows (5-minute
+  steps) and a Save button directly into the same menu — no separate
+  window. The app then switches itself on/off at those times
+  automatically, checked every 30s. Overnight ranges work too (e.g.
+  22:00–06:00). Manual toggling from the menu still works between
   schedule checks; the next scheduled boundary will re-apply the
   schedule's state. Settings persist in `UserDefaults` across restarts.
 - Every 60 seconds while active it moves the mouse 1px and back, and

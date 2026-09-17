@@ -213,13 +213,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         // discarding any colors drawn into it -- there's no way to keep
         // part of one template image colored. So the ring is always drawn
         // with an explicit color that matches the system's current icon
-        // color (resolved at draw time, so it still tracks light/dark
-        // mode whenever the icon is redrawn, i.e. on every state change),
-        // and only the center dot switches to green when active.
-        let ringColor = NSColor.labelColor
+        // color, and only the center dot switches to green when active.
+        //
+        // NSColor.labelColor resolves against whatever NSAppearance is
+        // current at draw time, and drawing into an offscreen NSImage via
+        // lockFocus() doesn't reliably pick up the menu bar's actual (dark)
+        // appearance -- confirmed live: it resolved to black even in Dark
+        // Mode. Checking the system's effective appearance directly and
+        // picking white/black explicitly sidesteps that resolution issue.
+        let isDarkMode = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let ringColor: NSColor = isDarkMode ? .white : .black
         let dotColor: NSColor = active
             ? NSColor(calibratedRed: 0.20, green: 0.78, blue: 0.35, alpha: 1.0)
-            : NSColor.labelColor
+            : ringColor
 
         let lineWidth: CGFloat = 1.6
         let inset = lineWidth / 2 + 1

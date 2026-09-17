@@ -30,14 +30,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var scheduleCheckTimer: Timer?
 
     private var scheduleLabelField: NSTextField?
+    private var topSeparatorItem: NSMenuItem?
     private var scheduleRowItem: NSMenuItem?
     private var startRowItem: NSMenuItem?
     private var endRowItem: NSMenuItem?
     private var saveRowItem: NSMenuItem?
-    private var startHourPopup: NSPopUpButton?
-    private var startMinutePopup: NSPopUpButton?
-    private var endHourPopup: NSPopUpButton?
-    private var endMinutePopup: NSPopUpButton?
+    private var bottomSeparatorItem: NSMenuItem?
+    private var startHourStepper: NSStepper?
+    private var startMinuteStepper: NSStepper?
+    private var endHourStepper: NSStepper?
+    private var endMinuteStepper: NSStepper?
+    private var startHourField: NSTextField?
+    private var startMinuteField: NSTextField?
+    private var endHourField: NSTextField?
+    private var endMinuteField: NSTextField?
 
     private let minuteStep = 5
 
@@ -112,13 +118,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         toggleItem.target = self
         menu.addItem(toggleItem)
 
+        let topSeparator = NSMenuItem.separator()
+        menu.addItem(topSeparator)
+        topSeparatorItem = topSeparator
+
         menu.addItem(buildScheduleSwitchRow())
+
+        let bottomSeparator = NSMenuItem.separator()
+        menu.addItem(bottomSeparator)
+        bottomSeparatorItem = bottomSeparator
 
         if scheduleEnabled {
             insertScheduleEditingRows(into: menu)
         }
-
-        menu.addItem(NSMenuItem.separator())
 
         let quitItem = NSMenuItem(
             title: "Quit",
@@ -387,7 +399,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Inline schedule menu rows
 
-    private let rowWidth: CGFloat = 210
+    // NSPopUpButton doesn't work reliably embedded in a menu item's custom
+    // view -- it needs to open its own nested menu while the parent NSMenu
+    // already owns mouse tracking, which is a well-known AppKit limitation
+    // (confirmed live: the dropdowns didn't respond to clicks at all).
+    // NSStepper doesn't have this problem since it never presents a menu of
+    // its own, so hour/minute are click-to-increment/decrement instead.
+    private let rowWidth: CGFloat = 260
+
+    private let hourStepperTag = 1
+    private let minuteStepperTag = 2
 
     private func buildScheduleSwitchRow() -> NSMenuItem {
         let container = NSView(frame: NSRect(x: 0, y: 0, width: rowWidth, height: 26))
@@ -410,30 +431,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return item
     }
 
-    private func makeHourPopup() -> NSPopUpButton {
-        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
-        popup.addItems(withTitles: (0..<24).map { String(format: "%02d", $0) })
-        return popup
+    private func makeValueField(_ text: String) -> NSTextField {
+        let field = NSTextField(labelWithString: text)
+        field.alignment = .center
+        field.font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular)
+        return field
     }
 
-    private func makeMinutePopup() -> NSPopUpButton {
-        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
-        popup.addItems(withTitles: stride(from: 0, to: 60, by: minuteStep).map { String(format: "%02d", $0) })
-        return popup
-    }
-
-    private func selectTime(_ minutes: Int, hourPopup: NSPopUpButton?, minutePopup: NSPopUpButton?) {
-        let hour = minutes / 60
-        let minute = minutes % 60
-        let roundedMinuteIndex = Int((Double(minute) / Double(minuteStep)).rounded()) % (60 / minuteStep)
-        hourPopup?.selectItem(at: hour)
-        minutePopup?.selectItem(at: roundedMinuteIndex)
-    }
-
-    private func readTime(hourPopup: NSPopUpButton?, minutePopup: NSPopUpButton?) -> Int {
-        let hour = hourPopup?.indexOfSelectedItem ?? 0
-        let minuteIndex = minutePopup?.indexOfSelectedItem ?? 0
-        return hour * 60 + minuteIndex * minuteStep
+    @objc private func stepperChanged(_ sender: NSStepper) {
+        let field: NSTextField?
+        if sender === startHourStepper {
+            field = startHourField
+        } else if sender === startMinuteStepper {
+            field = startMinuteField
+        } else if sender === endHourStepper {
+            field = endHourField
+        } else if sender === endMinuteStepper {
+            field = endMinuteField
+        } else {
+            field = nil
+        }
+        field?.stringValue = String(format: "%02d", sender.integerValue)
     }
 
     private func makeTimeRowItem(label labelText: String, minutes: Int, isStart: Bool) -> NSMenuItem {
@@ -443,26 +461,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         label.frame = NSRect(x: 14, y: 6, width: 40, height: 18)
         container.addSubview(label)
 
-        let hourPopup = makeHourPopup()
-        hourPopup.frame = NSRect(x: 58, y: 2, width: 58, height: 26)
-        container.addSubview(hourPopup)
+        let hour = minutes / 60
+        let minute = minutes % 60
+
+        let hourField = makeValueField(String(format: "%02d", hour))
+        hourField.frame = NSRect(x: 60, y: 6, width: 26, height: 18)
+        container.addSubview(hourField)
+
+        let hourStepper = NSStepper(frame: NSRect(x: 88, y: 2, width: 19, height: 27))
+        hourStepper.minValue = 0
+        hourStepper.maxValue = 23
+        hourStepper.increment = 1
+        hourStepper.valueWraps = true
+        hourStepper.integerValue = hour
+        hourStepper.tag = hourStepperTag
+        hourStepper.target = self
+        hourStepper.action = #selector(stepperChanged(_:))
+        container.addSubview(hourStepper)
 
         let colon = NSTextField(labelWithString: ":")
-        colon.frame = NSRect(x: 118, y: 6, width: 10, height: 18)
+        colon.frame = NSRect(x: 112, y: 6, width: 10, height: 18)
         container.addSubview(colon)
 
-        let minutePopup = makeMinutePopup()
-        minutePopup.frame = NSRect(x: 130, y: 2, width: 58, height: 26)
-        container.addSubview(minutePopup)
+        let minuteField = makeValueField(String(format: "%02d", minute))
+        minuteField.frame = NSRect(x: 124, y: 6, width: 26, height: 18)
+        container.addSubview(minuteField)
 
-        selectTime(minutes, hourPopup: hourPopup, minutePopup: minutePopup)
+        let minuteStepper = NSStepper(frame: NSRect(x: 152, y: 2, width: 19, height: 27))
+        minuteStepper.minValue = 0
+        minuteStepper.maxValue = 55
+        minuteStepper.increment = Double(minuteStep)
+        minuteStepper.valueWraps = true
+        minuteStepper.integerValue = minute
+        minuteStepper.tag = minuteStepperTag
+        minuteStepper.target = self
+        minuteStepper.action = #selector(stepperChanged(_:))
+        container.addSubview(minuteStepper)
 
         if isStart {
-            startHourPopup = hourPopup
-            startMinutePopup = minutePopup
+            startHourField = hourField
+            startMinuteField = minuteField
+            startHourStepper = hourStepper
+            startMinuteStepper = minuteStepper
         } else {
-            endHourPopup = hourPopup
-            endMinutePopup = minutePopup
+            endHourField = hourField
+            endMinuteField = minuteField
+            endHourStepper = hourStepper
+            endMinuteStepper = minuteStepper
         }
 
         let item = NSMenuItem()
@@ -503,10 +548,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startRowItem = nil
         endRowItem = nil
         saveRowItem = nil
-        startHourPopup = nil
-        startMinutePopup = nil
-        endHourPopup = nil
-        endMinutePopup = nil
+        startHourStepper = nil
+        startMinuteStepper = nil
+        endHourStepper = nil
+        endMinuteStepper = nil
+        startHourField = nil
+        startMinuteField = nil
+        endHourField = nil
+        endMinuteField = nil
     }
 
     @objc private func scheduleSwitchToggled(_ sender: NSSwitch) {
@@ -526,8 +575,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func saveSchedule() {
-        scheduleStartMinutes = readTime(hourPopup: startHourPopup, minutePopup: startMinutePopup)
-        scheduleEndMinutes = readTime(hourPopup: endHourPopup, minutePopup: endMinutePopup)
+        scheduleStartMinutes = (startHourStepper?.integerValue ?? 0) * 60 + (startMinuteStepper?.integerValue ?? 0)
+        scheduleEndMinutes = (endHourStepper?.integerValue ?? 0) * 60 + (endMinuteStepper?.integerValue ?? 0)
 
         log("StayActive: schedule saved, start=\(scheduleStartMinutes)min, end=\(scheduleEndMinutes)min")
 

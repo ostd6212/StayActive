@@ -1,7 +1,7 @@
 import Cocoa
 
-// Generates icon.iconset/ with all standard sizes: a thin green ring with a
-// bold green dot in the center, matching the menu bar icon's design.
+// Generates icon.iconset/ with all standard sizes: a white backdrop with a
+// thin black ring and a bold black dot in the center.
 // Run on macOS: swift generate_icon.swift
 // Then: iconutil -c icns icon.iconset
 
@@ -39,8 +39,8 @@ func drawIcon(size: Int) -> NSBitmapImageRep {
     let cg = ctx!.cgContext
 
     let s = CGFloat(size)
-    let green = NSColor(calibratedRed: 0.20, green: 0.78, blue: 0.35, alpha: 1.0).cgColor
-    let background = NSColor(calibratedRed: 0.11, green: 0.12, blue: 0.13, alpha: 1.0).cgColor
+    let ink = NSColor.black.cgColor
+    let background = NSColor.white.cgColor
 
     // macOS-style rounded-square backdrop so the icon has its own contrast
     // instead of relying on Finder's transparent-icon placeholder.
@@ -63,13 +63,13 @@ func drawIcon(size: Int) -> NSBitmapImageRep {
         width: s - margin * 2,
         height: s - margin * 2
     )
-    cg.setStrokeColor(green)
+    cg.setStrokeColor(ink)
     cg.setLineWidth(lineWidth)
     cg.strokeEllipse(in: circleRect)
 
     let dotSize = s * 0.26
     let dotRect = CGRect(x: (s - dotSize) / 2, y: (s - dotSize) / 2, width: dotSize, height: dotSize)
-    cg.setFillColor(green)
+    cg.setFillColor(ink)
     cg.fillEllipse(in: dotRect)
 
     NSGraphicsContext.restoreGraphicsState()

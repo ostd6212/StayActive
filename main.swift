@@ -448,15 +448,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         // highlight its text) the instant the menu opened, before the user
         // touched anything. Collapsed by default sidesteps both: nothing
         // focusable is visible until the user asks for it.
-        let disclosure = NSButton(
-            title: isScheduleExpanded ? "▾" : "▸",
-            target: self,
-            action: #selector(toggleScheduleExpanded)
-        )
+        let disclosure = NSButton(frame: NSRect(x: 106, y: 1, width: 20, height: 20))
+        disclosure.bezelStyle = .inline
         disclosure.isBordered = false
-        disclosure.font = .systemFont(ofSize: 11, weight: .regular)
+        disclosure.imagePosition = .imageOnly
+        disclosure.image = NSImage(
+            systemSymbolName: isScheduleExpanded ? "chevron.down" : "chevron.right",
+            accessibilityDescription: nil
+        )
         disclosure.contentTintColor = .secondaryLabelColor
-        disclosure.frame = NSRect(x: 108, y: 2, width: 18, height: 18)
+        disclosure.target = self
+        disclosure.action = #selector(toggleScheduleExpanded)
         container.addSubview(disclosure)
         disclosureButton = disclosure
 
@@ -595,7 +597,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
     @objc private func toggleScheduleExpanded() {
         isScheduleExpanded.toggle()
-        disclosureButton?.title = isScheduleExpanded ? "▾" : "▸"
+        disclosureButton?.image = NSImage(
+            systemSymbolName: isScheduleExpanded ? "chevron.down" : "chevron.right",
+            accessibilityDescription: nil
+        )
         log("StayActive: schedule editing rows \(isScheduleExpanded ? "expanded" : "collapsed")")
         updateScheduleRowsVisibility()
     }

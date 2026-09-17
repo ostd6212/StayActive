@@ -506,6 +506,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         disclosure.contentTintColor = .secondaryLabelColor
         disclosure.target = self
         disclosure.action = #selector(toggleScheduleExpanded)
+        // Nothing to expand while the schedule is off, so there's no point
+        // showing it at all -- appears once the switch is turned on.
+        disclosure.isHidden = !scheduleEnabled
         container.addSubview(disclosure)
         disclosureButton = disclosure
 
@@ -669,7 +672,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     @objc private func scheduleSwitchToggled(_ sender: NSSwitch) {
         scheduleEnabled = (sender.state == .on)
         scheduleLabelField?.stringValue = scheduleSubtitleText()
+        disclosureButton?.isHidden = !scheduleEnabled
         log("StayActive: schedule toggled, enabled=\(scheduleEnabled)")
+
+        if !scheduleEnabled {
+            // Nothing to expand while off; reset so it doesn't reappear
+            // pre-expanded the next time the schedule is turned back on.
+            isScheduleExpanded = false
+            disclosureButton?.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)
+        }
 
         updateScheduleRowsVisibility()
         evaluateSchedule()

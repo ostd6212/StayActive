@@ -455,6 +455,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         // are the same rect. Aligned to the title line's vertical center,
         // not the whole row.
         toggle.sizeToFit()
+        // NSSwitch has no smaller controlSize than .small, so shrink the
+        // frame itself a bit further (uniformly, to keep its aspect ratio
+        // intact) rather than via a layer transform -- a transform leaves
+        // the original, larger frame as the actual clickable area, which
+        // is exactly the kind of click/visual mismatch already fixed once.
+        let shrink: CGFloat = 0.82
+        toggle.setFrameSize(NSSize(width: toggle.frame.width * shrink, height: toggle.frame.height * shrink))
         toggle.setFrameOrigin(NSPoint(
             x: rowWidth - 14 - toggle.frame.width,
             y: (title.frame.midY - toggle.frame.height / 2).rounded()
@@ -517,6 +524,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         // Only minuteStep increments are meaningful (matches the schedule
         // check's granularity), so round typed input to the nearest one.
         return min(Int((Double(clamped) / Double(minuteStep)).rounded()) * minuteStep, 55)
+    }
+
+    // Rejects any edit that would grow the field past 2 characters, so
+    // typing a 3rd digit (e.g. "232") is simply not possible instead of
+    // only being clamped after the fact when the field loses focus.
+    func control(
+        _ control: NSControl,
+        textView: NSTextView,
+        shouldChangeTextIn affectedCharRange: NSRange,
+        replacementString: String?
+    ) -> Bool {
+        guard let replacementString else { return true }
+        let resultLength = (textView.string as NSString)
+            .replacingCharacters(in: affectedCharRange, with: replacementString)
+            .count
+        return resultLength <= 2
     }
 
     func controlTextDidEndEditing(_ obj: Notification) {
@@ -639,6 +662,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         log("StayActive: schedule saved, start=\(scheduleStartMinutes)min, end=\(scheduleEndMinutes)min")
 
         scheduleLabelField?.stringValue = scheduleSubtitleText()
+
+        // Collapse back under the disclosure once saved -- editing is done,
+        // no reason to keep the fields taking up space in the menu.
+        isScheduleExpanded = false
+        disclosureButton?.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)
+        updateScheduleRowsVisibility()
+
         evaluateSchedule()
     }
 }

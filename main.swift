@@ -104,25 +104,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         log("StayActive: setting up status item")
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem.button?.image = makeRingImage()
-        statusItem.button?.imagePosition = .imageOnly
 
-        // The dot is a separate overlay view, not part of the ring's image.
+        // Both the ring and the dot are separate overlay subviews rather
+        // than one drawn into the button's own .image, and the dot is
+        // centered on the RING's own anchors, not the button's -- centering
+        // each independently on the button left them slightly off from one
+        // another in practice (likely NSStatusBarButton's own image layout
+        // doesn't put its image at exactly the same point as the button's
+        // geometric bounds center). Anchoring the dot to the ring directly
+        // makes them share the exact same reference point, so they can't
+        // drift apart regardless of any such button-level quirk.
+        //
         // isTemplate re-tints an entire NSImage uniformly from its alpha
         // mask, so there's no way for one image to have a ring that always
         // matches every other menu bar icon's native color/vibrancy AND a
-        // dot with its own explicit green -- keeping them as two separate
-        // images each just does the state (ring: always template, never
-        // redrawn; dot: template when off so it matches the ring exactly,
-        // explicit green when active) that fits it.
+        // dot with its own explicit green -- that's why these are two
+        // separate images (ring: always template, never redrawn; dot:
+        // template when off so it matches the ring exactly, explicit green
+        // when active) instead of one.
         if let button = statusItem.button {
+            let ring = NSImageView()
+            ring.translatesAutoresizingMaskIntoConstraints = false
+            ring.image = makeRingImage()
+            button.addSubview(ring)
+
             let dot = NSImageView()
             dot.translatesAutoresizingMaskIntoConstraints = false
             dot.image = makeDotImage(active: isActive)
             button.addSubview(dot)
+
             NSLayoutConstraint.activate([
-                dot.centerXAnchor.constraint(equalTo: button.centerXAnchor),
-                dot.centerYAnchor.constraint(equalTo: button.centerYAnchor),
+                ring.centerXAnchor.constraint(equalTo: button.centerXAnchor),
+                ring.centerYAnchor.constraint(equalTo: button.centerYAnchor),
+                ring.widthAnchor.constraint(equalToConstant: 18),
+                ring.heightAnchor.constraint(equalToConstant: 18),
+
+                dot.centerXAnchor.constraint(equalTo: ring.centerXAnchor),
+                dot.centerYAnchor.constraint(equalTo: ring.centerYAnchor),
                 dot.widthAnchor.constraint(equalToConstant: 7),
                 dot.heightAnchor.constraint(equalToConstant: 7),
             ])

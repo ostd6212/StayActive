@@ -533,10 +533,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.insertItem(endItem, at: startIndex + 1)
         endRowItem = endItem
 
-        let saveItem = NSMenuItem(title: "Save", action: #selector(saveSchedule), keyEquivalent: "")
-        saveItem.target = self
-        menu.insertItem(saveItem, at: startIndex + 2)
-        saveRowItem = saveItem
+        menu.insertItem(buildSaveButtonRow(), at: startIndex + 2)
+    }
+
+    private func buildSaveButtonRow() -> NSMenuItem {
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: rowWidth, height: 34))
+
+        let button = NSButton(title: "Save", target: self, action: #selector(saveSchedule))
+        button.bezelStyle = .rounded
+        button.controlSize = .regular
+        let fittingWidth = max(button.fittingSize.width, 90)
+        button.frame = NSRect(x: (rowWidth - fittingWidth) / 2, y: 3, width: fittingWidth, height: 26)
+        container.addSubview(button)
+
+        let item = NSMenuItem()
+        item.view = container
+        saveRowItem = item
+        return item
     }
 
     private func removeScheduleEditingRows(from menu: NSMenu) {

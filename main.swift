@@ -439,17 +439,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         let subtitle = NSTextField(labelWithString: scheduleSubtitleText())
         subtitle.font = .systemFont(ofSize: 11, weight: .regular)
         subtitle.textColor = .secondaryLabelColor
-        subtitle.frame = NSRect(x: 14, y: 4, width: rowWidth - 14 - 40, height: 14)
+        subtitle.frame = NSRect(x: 14, y: 4, width: rowWidth - 14 - 48, height: 14)
         container.addSubview(subtitle)
         scheduleLabelField = subtitle
+
+        let toggle = NSSwitch()
+        toggle.controlSize = .small
+        toggle.state = scheduleEnabled ? .on : .off
+        toggle.target = self
+        toggle.action = #selector(scheduleSwitchToggled(_:))
+        // sizeToFit before positioning: a frame that doesn't exactly match
+        // NSSwitch's real intrinsic size leaves a dead margin around the
+        // visible pill that doesn't respond to clicks. Positioning from the
+        // fitted size guarantees the visible switch and its clickable area
+        // are the same rect. Aligned to the title line's vertical center,
+        // not the whole row.
+        toggle.sizeToFit()
+        toggle.setFrameOrigin(NSPoint(
+            x: rowWidth - 14 - toggle.frame.width,
+            y: (title.frame.midY - toggle.frame.height / 2).rounded()
+        ))
+        container.addSubview(toggle)
 
         // Disclosure to reveal the Start/End/Save editing rows on demand --
         // they used to always show whenever the schedule was on, and the
         // first editable field would silently grab keyboard focus (and
         // highlight its text) the instant the menu opened, before the user
         // touched anything. Collapsed by default sidesteps both: nothing
-        // focusable is visible until the user asks for it.
-        let disclosure = NSButton(frame: NSRect(x: rowWidth - 14 - 20, y: 1, width: 20, height: 20))
+        // focusable is visible until the user asks for it. Horizontally
+        // centered under the switch (not flush to the same right margin,
+        // which left it looking shifted right of the switch's visual
+        // center since the switch is wider) and added last so it's topmost.
+        let disclosureWidth: CGFloat = 20
+        let disclosure = NSButton(frame: NSRect(
+            x: (toggle.frame.midX - disclosureWidth / 2).rounded(),
+            y: 1,
+            width: disclosureWidth,
+            height: 20
+        ))
         disclosure.bezelStyle = .inline
         disclosure.isBordered = false
         disclosure.imagePosition = .imageOnly
@@ -462,26 +489,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         disclosure.action = #selector(toggleScheduleExpanded)
         container.addSubview(disclosure)
         disclosureButton = disclosure
-
-        let toggle = NSSwitch()
-        toggle.controlSize = .small
-        toggle.state = scheduleEnabled ? .on : .off
-        toggle.target = self
-        toggle.action = #selector(scheduleSwitchToggled(_:))
-        // sizeToFit before positioning: a frame that doesn't exactly match
-        // NSSwitch's real intrinsic size leaves a dead margin around the
-        // visible pill that doesn't respond to clicks. Positioning from the
-        // fitted size guarantees the visible switch and its clickable area
-        // are the same rect. Added last so it's topmost and nothing else
-        // in this view can shadow its clicks. Aligned to the title line's
-        // vertical center, not the whole row, to mirror the chevron's
-        // alignment to the time line below it.
-        toggle.sizeToFit()
-        toggle.setFrameOrigin(NSPoint(
-            x: rowWidth - 14 - toggle.frame.width,
-            y: (title.frame.midY - toggle.frame.height / 2).rounded()
-        ))
-        container.addSubview(toggle)
 
         let item = NSMenuItem()
         item.view = container

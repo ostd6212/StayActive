@@ -424,11 +424,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     private let minuteFieldTag = 2
 
     private func buildScheduleSwitchRow() -> NSMenuItem {
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: rowWidth, height: 40))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: rowWidth, height: 54))
 
         let title = NSTextField(labelWithString: "Schedule")
         title.font = .systemFont(ofSize: 13, weight: .medium)
-        title.frame = NSRect(x: 14, y: 20, width: rowWidth - 14 - 55, height: 18)
+        title.frame = NSRect(x: 14, y: 36, width: rowWidth - 14 - 55, height: 18)
         container.addSubview(title)
 
         // Time range on its own line below "Schedule" -- squeezing both
@@ -438,7 +438,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         let subtitle = NSTextField(labelWithString: scheduleSubtitleText())
         subtitle.font = .systemFont(ofSize: 11, weight: .regular)
         subtitle.textColor = .secondaryLabelColor
-        subtitle.frame = NSRect(x: 14, y: 4, width: 90, height: 14)
+        subtitle.frame = NSRect(x: 14, y: 20, width: 120, height: 14)
         container.addSubview(subtitle)
         scheduleLabelField = subtitle
 
@@ -447,8 +447,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         // first editable field would silently grab keyboard focus (and
         // highlight its text) the instant the menu opened, before the user
         // touched anything. Collapsed by default sidesteps both: nothing
-        // focusable is visible until the user asks for it.
-        let disclosure = NSButton(frame: NSRect(x: 106, y: 1, width: 20, height: 20))
+        // focusable is visible until the user asks for it. Centered on its
+        // own line below the time, reading as one cohesive block rather
+        // than a stray icon crowding the time text.
+        let disclosure = NSButton(frame: NSRect(x: (rowWidth - 20) / 2, y: 2, width: 20, height: 20))
         disclosure.bezelStyle = .inline
         disclosure.isBordered = false
         disclosure.imagePosition = .imageOnly

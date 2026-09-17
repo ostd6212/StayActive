@@ -13,7 +13,7 @@ func log(_ message: String) {
     os_log("%{public}@", log: stayActiveLog, type: .info, message)
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
     private var statusItem: NSStatusItem!
     private var timer: Timer?
@@ -153,9 +153,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         String(format: "%02d:%02d", minutes / 60, minutes % 60)
     }
 
-    private func scheduleLabelText() -> String {
-        guard scheduleEnabled else { return "Schedule" }
-        return "Schedule (\(formatMinutes(scheduleStartMinutes))–\(formatMinutes(scheduleEndMinutes)))"
+    private func scheduleSubtitleText() -> String {
+        guard scheduleEnabled else { return "Off" }
+        return "\(formatMinutes(scheduleStartMinutes))–\(formatMinutes(scheduleEndMinutes))"
     }
 
     @objc private func toggleActive() {
@@ -411,21 +411,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let minuteStepperTag = 2
 
     private func buildScheduleSwitchRow() -> NSMenuItem {
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: rowWidth, height: 24))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: rowWidth, height: 40))
 
-        let label = NSTextField(labelWithString: scheduleLabelText())
-        label.font = .systemFont(ofSize: 13, weight: .medium)
-        label.frame = NSRect(x: 14, y: 3, width: rowWidth - 14 - 42, height: 18)
-        label.lineBreakMode = .byTruncatingTail
-        container.addSubview(label)
-        scheduleLabelField = label
+        let title = NSTextField(labelWithString: "Schedule")
+        title.font = .systemFont(ofSize: 13, weight: .medium)
+        title.frame = NSRect(x: 14, y: 20, width: rowWidth - 14 - 42, height: 18)
+        container.addSubview(title)
 
-        let toggle = NSSwitch(frame: NSRect(x: rowWidth - 40, y: 2, width: 32, height: 19))
+        let toggle = NSSwitch(frame: NSRect(x: rowWidth - 40, y: 10, width: 32, height: 19))
         toggle.controlSize = .small
         toggle.state = scheduleEnabled ? .on : .off
         toggle.target = self
         toggle.action = #selector(scheduleSwitchToggled(_:))
         container.addSubview(toggle)
+
+        // Time range on its own line below "Schedule" -- squeezing both
+        // onto one line next to the switch made long ranges get truncated.
+        let subtitle = NSTextField(labelWithString: scheduleSubtitleText())
+        subtitle.font = .systemFont(ofSize: 11, weight: .regular)
+        subtitle.textColor = .secondaryLabelColor
+        subtitle.frame = NSRect(x: 14, y: 4, width: rowWidth - 28, height: 14)
+        container.addSubview(subtitle)
+        scheduleLabelField = subtitle
 
         let item = NSMenuItem()
         item.view = container
@@ -433,10 +440,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return item
     }
 
+    // Editable, so a value can be typed directly instead of only clicking
+    // the stepper repeatedly; the stepper stays as a quick +/- alternative
+    // and the two are kept in sync in both directions.
     private func makeValueField(_ text: String) -> NSTextField {
-        let field = NSTextField(labelWithString: text)
+        let field = NSTextField(string: text)
         field.alignment = .center
         field.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+        field.bezelStyle = .roundedBezel
+        field.controlSize = .small
+        field.delegate = self
         return field
     }
 
@@ -456,23 +469,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         field?.stringValue = String(format: "%02d", sender.integerValue)
     }
 
+    // Typed text is validated/clamped and pushed back into the paired
+    // stepper (which is the source of truth read at Save time).
+    func controlTextDidEndEditing(_ obj: Notification) {
+        guard let field = obj.object as? NSTextField else { return }
+
+        let stepper: NSStepper?
+        if field === startHourField {
+            stepper = startHourStepper
+        } else if field === startMinuteField {
+            stepper = startMinuteStepper
+        } else if field === endHourField {
+            stepper = endHourStepper
+        } else if field === endMinuteField {
+            stepper = endMinuteStepper
+        } else {
+            stepper = nil
+        }
+
+        guard let stepper else { return }
+
+        let typed = Int(field.stringValue.trimmingCharacters(in: .whitespaces)) ?? stepper.integerValue
+        let clamped = min(max(typed, Int(stepper.minValue)), Int(stepper.maxValue))
+        // Minute fields only make sense in minuteStep increments (matches
+        // the stepper's own increment), so round to the nearest one.
+        let rounded = stepper.tag == minuteStepperTag
+            ? Int((Double(clamped) / Double(minuteStep)).rounded()) * minuteStep
+            : clamped
+
+        stepper.integerValue = rounded
+        field.stringValue = String(format: "%02d", rounded)
+    }
+
     private func makeTimeRowItem(label labelText: String, minutes: Int, isStart: Bool) -> NSMenuItem {
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: rowWidth, height: 24))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: rowWidth, height: 26))
 
         let label = NSTextField(labelWithString: labelText)
         label.font = .systemFont(ofSize: 12, weight: .regular)
         label.textColor = .secondaryLabelColor
-        label.frame = NSRect(x: 14, y: 4, width: 34, height: 16)
+        label.frame = NSRect(x: 14, y: 5, width: 34, height: 16)
         container.addSubview(label)
 
         let hour = minutes / 60
         let minute = minutes % 60
 
         let hourField = makeValueField(String(format: "%02d", hour))
-        hourField.frame = NSRect(x: 50, y: 4, width: 20, height: 16)
+        hourField.frame = NSRect(x: 50, y: 3, width: 28, height: 20)
         container.addSubview(hourField)
 
-        let hourStepper = NSStepper(frame: NSRect(x: 72, y: 2, width: 13, height: 19))
+        let hourStepper = NSStepper(frame: NSRect(x: 80, y: 3, width: 13, height: 19))
         hourStepper.controlSize = .mini
         hourStepper.minValue = 0
         hourStepper.maxValue = 23
@@ -487,14 +532,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let colon = NSTextField(labelWithString: ":")
         colon.font = .systemFont(ofSize: 12, weight: .regular)
         colon.textColor = .secondaryLabelColor
-        colon.frame = NSRect(x: 88, y: 4, width: 8, height: 16)
+        colon.frame = NSRect(x: 95, y: 5, width: 8, height: 16)
         container.addSubview(colon)
 
         let minuteField = makeValueField(String(format: "%02d", minute))
-        minuteField.frame = NSRect(x: 98, y: 4, width: 20, height: 16)
+        minuteField.frame = NSRect(x: 105, y: 3, width: 28, height: 20)
         container.addSubview(minuteField)
 
-        let minuteStepper = NSStepper(frame: NSRect(x: 120, y: 2, width: 13, height: 19))
+        let minuteStepper = NSStepper(frame: NSRect(x: 135, y: 3, width: 13, height: 19))
         minuteStepper.controlSize = .mini
         minuteStepper.minValue = 0
         minuteStepper.maxValue = 55
@@ -582,7 +627,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func scheduleSwitchToggled(_ sender: NSSwitch) {
         scheduleEnabled = (sender.state == .on)
-        scheduleLabelField?.stringValue = scheduleLabelText()
+        scheduleLabelField?.stringValue = scheduleSubtitleText()
         log("StayActive: schedule toggled, enabled=\(scheduleEnabled)")
 
         if let menu = statusItem.menu {
@@ -602,7 +647,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         log("StayActive: schedule saved, start=\(scheduleStartMinutes)min, end=\(scheduleEndMinutes)min")
 
-        scheduleLabelField?.stringValue = scheduleLabelText()
+        scheduleLabelField?.stringValue = scheduleSubtitleText()
         evaluateSchedule()
     }
 }

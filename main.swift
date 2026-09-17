@@ -209,13 +209,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
         guard let ctx = NSGraphicsContext.current?.cgContext else { return image }
 
-        // Off state is drawn as a template image, so macOS tints it exactly
-        // like every other menu bar icon (black/white, adapts automatically
-        // to light/dark mode and menu bar highlighting). The active state
-        // needs an explicit green, so it can't be a template image.
-        let ringColor: NSColor = active
+        // isTemplate re-tints an ENTIRE image uniformly from its alpha mask,
+        // discarding any colors drawn into it -- there's no way to keep
+        // part of one template image colored. So the ring is always drawn
+        // with an explicit color that matches the system's current icon
+        // color (resolved at draw time, so it still tracks light/dark
+        // mode whenever the icon is redrawn, i.e. on every state change),
+        // and only the center dot switches to green when active.
+        let ringColor = NSColor.labelColor
+        let dotColor: NSColor = active
             ? NSColor(calibratedRed: 0.20, green: 0.78, blue: 0.35, alpha: 1.0)
-            : NSColor.black
+            : NSColor.labelColor
 
         let lineWidth: CGFloat = 1.6
         let inset = lineWidth / 2 + 1
@@ -237,10 +241,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             width: dotDiameter,
             height: dotDiameter
         )
-        ctx.setFillColor(ringColor.cgColor)
+        ctx.setFillColor(dotColor.cgColor)
         ctx.fillEllipse(in: dotRect)
 
-        image.isTemplate = !active
+        // Always non-template now: template mode would discard the dot's
+        // explicit green along with everything else.
+        image.isTemplate = false
         return image
     }
 
@@ -526,9 +532,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         return min(Int((Double(clamped) / Double(minuteStep)).rounded()) * minuteStep, 55)
     }
 
-    // Rejects any edit that would grow the field past 2 characters, so
-    // typing a 3rd digit (e.g. "232") is simply not possible instead of
-    // only being clamped after the fact when the field loses focus.
+    // Rejects any edit that would grow the field past 2 characters or that
+    // contains a non-digit, so neither a 3rd digit nor a letter is even
+    // insertable, instead of only being cleaned up after the fact when the
+    // field loses focus.
     func control(
         _ control: NSControl,
         textView: NSTextView,
@@ -536,10 +543,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         replacementString: String?
     ) -> Bool {
         guard let replacementString else { return true }
+        guard replacementString.allSatisfy({ $0.isNumber }) else { return false }
         let resultLength = (textView.string as NSString)
             .replacingCharacters(in: affectedCharRange, with: replacementString)
             .count
         return resultLength <= 2
+    }
+
+    // Backstop for the above: shouldChangeTextIn only intercepts normal
+    // typing, not every possible way text can end up in the field (paste,
+    // dictation, drag-and-drop, IME input). This runs after any of those
+    // and forcibly strips non-digits / truncates to 2 chars regardless of
+    // how the text got there, so nothing can slip through both.
+    func controlTextDidChange(_ obj: Notification) {
+        guard let field = obj.object as? NSTextField else { return }
+        let sanitized = String(field.stringValue.filter { $0.isNumber }.prefix(2))
+        guard sanitized != field.stringValue else { return }
+        field.stringValue = sanitized
+        field.currentEditor()?.string = sanitized
+        field.currentEditor()?.selectedRange = NSRange(location: sanitized.count, length: 0)
     }
 
     func controlTextDidEndEditing(_ obj: Notification) {

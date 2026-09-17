@@ -28,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Schedule state
 
     private var scheduleCheckTimer: Timer?
+    private var scheduleStatusItem: NSMenuItem?
     private var settingsWindow: NSWindow?
     private var scheduleEnabledCheckbox: NSButton?
     private var startHourPopup: NSPopUpButton?
@@ -108,6 +109,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         toggleItem.target = self
         menu.addItem(toggleItem)
 
+        let scheduleLine = NSMenuItem(title: scheduleStatusTitle(), action: nil, keyEquivalent: "")
+        scheduleLine.isEnabled = false
+        menu.addItem(scheduleLine)
+        scheduleStatusItem = scheduleLine
+
         menu.addItem(NSMenuItem.separator())
 
         let settingsItem = NSMenuItem(
@@ -135,6 +141,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func toggleTitle() -> String {
         return isActive ? "Stop" : "Start"
+    }
+
+    private func formatMinutes(_ minutes: Int) -> String {
+        String(format: "%02d:%02d", minutes / 60, minutes % 60)
+    }
+
+    private func scheduleStatusTitle() -> String {
+        guard scheduleEnabled else { return "Schedule: Off" }
+        return "Schedule: \(formatMinutes(scheduleStartMinutes))–\(formatMinutes(scheduleEndMinutes))"
     }
 
     @objc private func toggleActive() {
@@ -486,6 +501,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         log("StayActive: schedule settings saved, enabled=\(scheduleEnabled), start=\(scheduleStartMinutes)min, end=\(scheduleEndMinutes)min")
 
+        scheduleStatusItem?.title = scheduleStatusTitle()
         settingsWindow?.close()
         evaluateSchedule()
     }

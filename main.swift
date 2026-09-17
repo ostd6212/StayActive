@@ -30,6 +30,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     private var scheduleCheckTimer: Timer?
 
     private var scheduleLabelField: NSTextField?
+    private var disclosureButton: NSButton?
+    private var isScheduleExpanded = false
     private var topSeparatorItem: NSMenuItem?
     private var scheduleRowItem: NSMenuItem?
     private var startRowItem: NSMenuItem?
@@ -431,17 +433,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
         // Time range on its own line below "Schedule" -- squeezing both
         // onto one line next to the switch made long ranges get truncated.
-        // Width is capped the same way as the title above so this label's
-        // frame doesn't extend under the switch: a non-interactive label
-        // still captures clicks over any area its frame covers, and since
-        // it used to span the full row width, it sat on top of the switch's
-        // bottom half and silently swallowed clicks meant for it.
+        // Kept narrow and clear of the switch's x-range (a non-interactive
+        // label still captures clicks over any area its frame covers).
         let subtitle = NSTextField(labelWithString: scheduleSubtitleText())
         subtitle.font = .systemFont(ofSize: 11, weight: .regular)
         subtitle.textColor = .secondaryLabelColor
-        subtitle.frame = NSRect(x: 14, y: 4, width: rowWidth - 14 - 55, height: 14)
+        subtitle.frame = NSRect(x: 14, y: 4, width: 90, height: 14)
         container.addSubview(subtitle)
         scheduleLabelField = subtitle
+
+        // Disclosure to reveal the Start/End/Save editing rows on demand --
+        // they used to always show whenever the schedule was on, and the
+        // first editable field would silently grab keyboard focus (and
+        // highlight its text) the instant the menu opened, before the user
+        // touched anything. Collapsed by default sidesteps both: nothing
+        // focusable is visible until the user asks for it.
+        let disclosure = NSButton(
+            title: isScheduleExpanded ? "▾" : "▸",
+            target: self,
+            action: #selector(toggleScheduleExpanded)
+        )
+        disclosure.isBordered = false
+        disclosure.font = .systemFont(ofSize: 11, weight: .regular)
+        disclosure.contentTintColor = .secondaryLabelColor
+        disclosure.frame = NSRect(x: 108, y: 2, width: 18, height: 18)
+        container.addSubview(disclosure)
+        disclosureButton = disclosure
 
         let toggle = NSSwitch()
         toggle.controlSize = .small
@@ -561,18 +578,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     }
 
     private func updateScheduleRowsVisibility() {
-        let hidden = !scheduleEnabled
+        let shouldShow = scheduleEnabled && isScheduleExpanded
+        let hidden = !shouldShow
         startRowItem?.isHidden = hidden
         endRowItem?.isHidden = hidden
         saveRowItem?.isHidden = hidden
 
-        if scheduleEnabled {
+        if shouldShow {
             // Reset to the persisted values in case fields were left
             // mid-edit (typed but not saved) from a previous time this was
             // shown.
             setFieldValues(startHourField, startMinuteField, minutes: scheduleStartMinutes)
             setFieldValues(endHourField, endMinuteField, minutes: scheduleEndMinutes)
         }
+    }
+
+    @objc private func toggleScheduleExpanded() {
+        isScheduleExpanded.toggle()
+        disclosureButton?.title = isScheduleExpanded ? "▾" : "▸"
+        log("StayActive: schedule editing rows \(isScheduleExpanded ? "expanded" : "collapsed")")
+        updateScheduleRowsVisibility()
     }
 
     @objc private func scheduleSwitchToggled(_ sender: NSSwitch) {

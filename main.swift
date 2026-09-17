@@ -424,21 +424,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     private let minuteFieldTag = 2
 
     private func buildScheduleSwitchRow() -> NSMenuItem {
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: rowWidth, height: 54))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: rowWidth, height: 40))
 
+        // Two rows, each with its own trailing control flush to the same
+        // right margin: "Schedule" + switch on top, the time range +
+        // disclosure chevron below it. Putting the chevron on its own
+        // centered line, or crowded next to the time, both looked off --
+        // mirroring the title/switch row keeps it visually consistent.
         let title = NSTextField(labelWithString: "Schedule")
         title.font = .systemFont(ofSize: 13, weight: .medium)
-        title.frame = NSRect(x: 14, y: 36, width: rowWidth - 14 - 55, height: 18)
+        title.frame = NSRect(x: 14, y: 20, width: rowWidth - 14 - 55, height: 18)
         container.addSubview(title)
 
-        // Time range on its own line below "Schedule" -- squeezing both
-        // onto one line next to the switch made long ranges get truncated.
-        // Kept narrow and clear of the switch's x-range (a non-interactive
-        // label still captures clicks over any area its frame covers).
         let subtitle = NSTextField(labelWithString: scheduleSubtitleText())
         subtitle.font = .systemFont(ofSize: 11, weight: .regular)
         subtitle.textColor = .secondaryLabelColor
-        subtitle.frame = NSRect(x: 14, y: 20, width: 120, height: 14)
+        subtitle.frame = NSRect(x: 14, y: 4, width: rowWidth - 14 - 40, height: 14)
         container.addSubview(subtitle)
         scheduleLabelField = subtitle
 
@@ -447,10 +448,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         // first editable field would silently grab keyboard focus (and
         // highlight its text) the instant the menu opened, before the user
         // touched anything. Collapsed by default sidesteps both: nothing
-        // focusable is visible until the user asks for it. Centered on its
-        // own line below the time, reading as one cohesive block rather
-        // than a stray icon crowding the time text.
-        let disclosure = NSButton(frame: NSRect(x: (rowWidth - 20) / 2, y: 2, width: 20, height: 20))
+        // focusable is visible until the user asks for it.
+        let disclosure = NSButton(frame: NSRect(x: rowWidth - 14 - 20, y: 1, width: 20, height: 20))
         disclosure.bezelStyle = .inline
         disclosure.isBordered = false
         disclosure.imagePosition = .imageOnly
@@ -474,11 +473,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         // visible pill that doesn't respond to clicks. Positioning from the
         // fitted size guarantees the visible switch and its clickable area
         // are the same rect. Added last so it's topmost and nothing else
-        // in this view can shadow its clicks.
+        // in this view can shadow its clicks. Aligned to the title line's
+        // vertical center, not the whole row, to mirror the chevron's
+        // alignment to the time line below it.
         toggle.sizeToFit()
         toggle.setFrameOrigin(NSPoint(
             x: rowWidth - 14 - toggle.frame.width,
-            y: (container.frame.height / 2 - toggle.frame.height / 2).rounded()
+            y: (title.frame.midY - toggle.frame.height / 2).rounded()
         ))
         container.addSubview(toggle)
 

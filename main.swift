@@ -16,6 +16,7 @@ func log(_ message: String) {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
     private var statusItem: NSStatusItem!
+    private var dotView: NSImageView?
     private var timer: Timer?
     private var isActive = false
 
@@ -103,8 +104,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         log("StayActive: setting up status item")
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem.button?.image = makeStatusIcon(active: isActive)
+        statusItem.button?.image = makeRingImage()
         statusItem.button?.imagePosition = .imageOnly
+
+        // The dot is a separate overlay view, not part of the ring's image.
+        // isTemplate re-tints an entire NSImage uniformly from its alpha
+        // mask, so there's no way for one image to have a ring that always
+        // matches every other menu bar icon's native color/vibrancy AND a
+        // dot with its own explicit green -- keeping them as two separate
+        // images each just does the state (ring: always template, never
+        // redrawn; dot: template when off so it matches the ring exactly,
+        // explicit green when active) that fits it.
+        if let button = statusItem.button {
+            let dot = NSImageView()
+            dot.translatesAutoresizingMaskIntoConstraints = false
+            dot.image = makeDotImage(active: isActive)
+            button.addSubview(dot)
+            NSLayoutConstraint.activate([
+                dot.centerXAnchor.constraint(equalTo: button.centerXAnchor),
+                dot.centerYAnchor.constraint(equalTo: button.centerYAnchor),
+                dot.widthAnchor.constraint(equalToConstant: 7),
+                dot.heightAnchor.constraint(equalToConstant: 7),
+            ])
+            dotView = dot
+        }
 
         let menu = NSMenu()
 
@@ -180,7 +203,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         isActive = newValue
         log("StayActive: setActive(\(newValue)) reason=\(reason)")
 
-        statusItem.button?.image = makeStatusIcon(active: isActive)
+        dotView?.image = makeDotImage(active: isActive)
         statusItem.menu?.item(at: 0)?.title = toggleTitle()
 
         if isActive {
@@ -200,7 +223,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
     // MARK: - Icon drawing (programmatic, no SF Symbol)
 
-    private func makeStatusIcon(active: Bool) -> NSImage {
+    // Plain ring, always a template image so macOS tints it exactly like
+    // every other menu bar icon (same color, same vibrancy blend against
+    // the bar) in every appearance -- drawn once and never redrawn, since
+    // its look never depends on app state. The active/inactive indicator
+    // lives entirely in the separate dot overlay (see makeDotImage) rather
+    // than here, because isTemplate re-tints an entire image uniformly
+    // from its alpha mask: a single image can't have a native-matching
+    // ring and an explicitly-colored dot at the same time.
+    private func makeRingImage() -> NSImage {
         let size = NSSize(width: 18, height: 18)
         let image = NSImage(size: size)
 
@@ -208,24 +239,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         defer { image.unlockFocus() }
 
         guard let ctx = NSGraphicsContext.current?.cgContext else { return image }
-
-        // isTemplate re-tints an ENTIRE image uniformly from its alpha mask,
-        // discarding any colors drawn into it -- there's no way to keep
-        // part of one template image colored. So the ring is always drawn
-        // with an explicit color that matches the system's current icon
-        // color, and only the center dot switches to green when active.
-        //
-        // NSColor.labelColor resolves against whatever NSAppearance is
-        // current at draw time, and drawing into an offscreen NSImage via
-        // lockFocus() doesn't reliably pick up the menu bar's actual (dark)
-        // appearance -- confirmed live: it resolved to black even in Dark
-        // Mode. Checking the system's effective appearance directly and
-        // picking white/black explicitly sidesteps that resolution issue.
-        let isDarkMode = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        let ringColor: NSColor = isDarkMode ? .white : .black
-        let dotColor: NSColor = active
-            ? NSColor(calibratedRed: 0.20, green: 0.78, blue: 0.35, alpha: 1.0)
-            : ringColor
 
         let lineWidth: CGFloat = 1.6
         let inset = lineWidth / 2 + 1
@@ -236,23 +249,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             height: size.height - inset * 2
         )
 
-        ctx.setStrokeColor(ringColor.cgColor)
+        ctx.setStrokeColor(NSColor.black.cgColor)
         ctx.setLineWidth(lineWidth)
         ctx.strokeEllipse(in: circleRect)
 
-        let dotDiameter: CGFloat = 7
-        let dotRect = NSRect(
-            x: (size.width - dotDiameter) / 2,
-            y: (size.height - dotDiameter) / 2,
-            width: dotDiameter,
-            height: dotDiameter
-        )
-        ctx.setFillColor(dotColor.cgColor)
-        ctx.fillEllipse(in: dotRect)
+        image.isTemplate = true
+        return image
+    }
 
-        // Always non-template now: template mode would discard the dot's
-        // explicit green along with everything else.
-        image.isTemplate = false
+    // Small overlay image centered on top of the ring. Template (like the
+    // ring) when inactive, so it's tinted identically and reads as part of
+    // the same native-colored icon; explicit green, non-template, only
+    // while active.
+    private func makeDotImage(active: Bool) -> NSImage {
+        let size = NSSize(width: 7, height: 7)
+        let image = NSImage(size: size)
+
+        image.lockFocus()
+        defer { image.unlockFocus() }
+
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return image }
+
+        let color: NSColor = active
+            ? NSColor(calibratedRed: 0.20, green: 0.78, blue: 0.35, alpha: 1.0)
+            : NSColor.black
+        ctx.setFillColor(color.cgColor)
+        ctx.fillEllipse(in: NSRect(origin: .zero, size: size))
+
+        image.isTemplate = !active
         return image
     }
 

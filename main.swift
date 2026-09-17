@@ -36,10 +36,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     private var endRowItem: NSMenuItem?
     private var saveRowItem: NSMenuItem?
     private var bottomSeparatorItem: NSMenuItem?
-    private var startHourStepper: NSStepper?
-    private var startMinuteStepper: NSStepper?
-    private var endHourStepper: NSStepper?
-    private var endMinuteStepper: NSStepper?
     private var startHourField: NSTextField?
     private var startMinuteField: NSTextField?
     private var endHourField: NSTextField?
@@ -124,13 +120,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
         menu.addItem(buildScheduleSwitchRow())
 
+        // Built once, up front, and shown/hidden via isHidden from here on --
+        // never inserted/removed while the menu might be open. Mutating a
+        // live NSMenu's item list mid-tracking left the menu's hit-testing
+        // out of sync with what was on screen (confirmed live: the switch
+        // only registered every other click after a rebuild).
+        let startItem = makeTimeRowItem(label: "Start", minutes: scheduleStartMinutes, isStart: true)
+        menu.addItem(startItem)
+        startRowItem = startItem
+
+        let endItem = makeTimeRowItem(label: "End", minutes: scheduleEndMinutes, isStart: false)
+        menu.addItem(endItem)
+        endRowItem = endItem
+
+        let saveItem = buildSaveButtonRow()
+        menu.addItem(saveItem)
+        saveRowItem = saveItem
+
         let bottomSeparator = NSMenuItem.separator()
         menu.addItem(bottomSeparator)
         bottomSeparatorItem = bottomSeparator
 
-        if scheduleEnabled {
-            insertScheduleEditingRows(into: menu)
-        }
+        updateScheduleRowsVisibility()
 
         let quitItem = NSMenuItem(
             title: "Quit",
@@ -399,16 +410,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
     // MARK: - Inline schedule menu rows
 
-    // NSPopUpButton doesn't work reliably embedded in a menu item's custom
-    // view -- it needs to open its own nested menu while the parent NSMenu
-    // already owns mouse tracking, which is a well-known AppKit limitation
-    // (confirmed live: the dropdowns didn't respond to clicks at all).
-    // NSStepper doesn't have this problem since it never presents a menu of
-    // its own, so hour/minute are click-to-increment/decrement instead.
+    // All schedule rows are built once, up front, and shown/hidden via
+    // isHidden from then on -- never inserted into or removed from the
+    // menu's item list after that. Mutating a live NSMenu's items while it
+    // might be open left the menu's hit-testing out of sync with what was
+    // drawn (confirmed live: the switch only registered every other click
+    // right after a rebuild). isHidden is a supported, safe toggle instead.
     private let rowWidth: CGFloat = 200
 
-    private let hourStepperTag = 1
-    private let minuteStepperTag = 2
+    private let hourFieldTag = 1
+    private let minuteFieldTag = 2
 
     private func buildScheduleSwitchRow() -> NSMenuItem {
         let container = NSView(frame: NSRect(x: 0, y: 0, width: rowWidth, height: 40))
@@ -440,65 +451,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         return item
     }
 
-    // Editable, so a value can be typed directly instead of only clicking
-    // the stepper repeatedly; the stepper stays as a quick +/- alternative
-    // and the two are kept in sync in both directions.
-    private func makeValueField(_ text: String) -> NSTextField {
+    // Editable, so hour/minute can be typed directly (no steppers anymore --
+    // once typing works there's no need for click-to-increment arrows too).
+    private func makeValueField(_ text: String, tag: Int) -> NSTextField {
         let field = NSTextField(string: text)
         field.alignment = .center
         field.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
         field.bezelStyle = .roundedBezel
         field.controlSize = .small
         field.delegate = self
+        field.tag = tag
         return field
     }
 
-    @objc private func stepperChanged(_ sender: NSStepper) {
-        let field: NSTextField?
-        if sender === startHourStepper {
-            field = startHourField
-        } else if sender === startMinuteStepper {
-            field = startMinuteField
-        } else if sender === endHourStepper {
-            field = endHourField
-        } else if sender === endMinuteStepper {
-            field = endMinuteField
-        } else {
-            field = nil
-        }
-        field?.stringValue = String(format: "%02d", sender.integerValue)
+    private func clampedTimeComponent(_ text: String, isMinute: Bool) -> Int {
+        let maxValue = isMinute ? 59 : 23
+        let value = Int(text.trimmingCharacters(in: .whitespaces)) ?? 0
+        let clamped = min(max(value, 0), maxValue)
+        guard isMinute else { return clamped }
+        // Only minuteStep increments are meaningful (matches the schedule
+        // check's granularity), so round typed input to the nearest one.
+        return min(Int((Double(clamped) / Double(minuteStep)).rounded()) * minuteStep, 55)
     }
 
-    // Typed text is validated/clamped and pushed back into the paired
-    // stepper (which is the source of truth read at Save time).
     func controlTextDidEndEditing(_ obj: Notification) {
         guard let field = obj.object as? NSTextField else { return }
-
-        let stepper: NSStepper?
-        if field === startHourField {
-            stepper = startHourStepper
-        } else if field === startMinuteField {
-            stepper = startMinuteStepper
-        } else if field === endHourField {
-            stepper = endHourStepper
-        } else if field === endMinuteField {
-            stepper = endMinuteStepper
-        } else {
-            stepper = nil
-        }
-
-        guard let stepper else { return }
-
-        let typed = Int(field.stringValue.trimmingCharacters(in: .whitespaces)) ?? stepper.integerValue
-        let clamped = min(max(typed, Int(stepper.minValue)), Int(stepper.maxValue))
-        // Minute fields only make sense in minuteStep increments (matches
-        // the stepper's own increment), so round to the nearest one.
-        let rounded = stepper.tag == minuteStepperTag
-            ? Int((Double(clamped) / Double(minuteStep)).rounded()) * minuteStep
-            : clamped
-
-        stepper.integerValue = rounded
-        field.stringValue = String(format: "%02d", rounded)
+        let value = clampedTimeComponent(field.stringValue, isMinute: field.tag == minuteFieldTag)
+        field.stringValue = String(format: "%02d", value)
     }
 
     private func makeTimeRowItem(label labelText: String, minutes: Int, isStart: Bool) -> NSMenuItem {
@@ -513,80 +492,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         let hour = minutes / 60
         let minute = minutes % 60
 
-        let hourField = makeValueField(String(format: "%02d", hour))
-        hourField.frame = NSRect(x: 50, y: 3, width: 28, height: 20)
+        let hourField = makeValueField(String(format: "%02d", hour), tag: hourFieldTag)
+        hourField.frame = NSRect(x: 54, y: 3, width: 32, height: 20)
         container.addSubview(hourField)
-
-        let hourStepper = NSStepper(frame: NSRect(x: 80, y: 3, width: 13, height: 19))
-        hourStepper.controlSize = .mini
-        hourStepper.minValue = 0
-        hourStepper.maxValue = 23
-        hourStepper.increment = 1
-        hourStepper.valueWraps = true
-        hourStepper.integerValue = hour
-        hourStepper.tag = hourStepperTag
-        hourStepper.target = self
-        hourStepper.action = #selector(stepperChanged(_:))
-        container.addSubview(hourStepper)
 
         let colon = NSTextField(labelWithString: ":")
         colon.font = .systemFont(ofSize: 12, weight: .regular)
         colon.textColor = .secondaryLabelColor
-        colon.frame = NSRect(x: 95, y: 5, width: 8, height: 16)
+        colon.frame = NSRect(x: 90, y: 5, width: 8, height: 16)
         container.addSubview(colon)
 
-        let minuteField = makeValueField(String(format: "%02d", minute))
-        minuteField.frame = NSRect(x: 105, y: 3, width: 28, height: 20)
+        let minuteField = makeValueField(String(format: "%02d", minute), tag: minuteFieldTag)
+        minuteField.frame = NSRect(x: 102, y: 3, width: 32, height: 20)
         container.addSubview(minuteField)
-
-        let minuteStepper = NSStepper(frame: NSRect(x: 135, y: 3, width: 13, height: 19))
-        minuteStepper.controlSize = .mini
-        minuteStepper.minValue = 0
-        minuteStepper.maxValue = 55
-        minuteStepper.increment = Double(minuteStep)
-        minuteStepper.valueWraps = true
-        minuteStepper.integerValue = minute
-        minuteStepper.tag = minuteStepperTag
-        minuteStepper.target = self
-        minuteStepper.action = #selector(stepperChanged(_:))
-        container.addSubview(minuteStepper)
 
         if isStart {
             startHourField = hourField
             startMinuteField = minuteField
-            startHourStepper = hourStepper
-            startMinuteStepper = minuteStepper
         } else {
             endHourField = hourField
             endMinuteField = minuteField
-            endHourStepper = hourStepper
-            endMinuteStepper = minuteStepper
         }
 
         let item = NSMenuItem()
         item.view = container
         return item
-    }
-
-    private func insertScheduleEditingRows(into menu: NSMenu) {
-        guard startRowItem == nil else { return }
-
-        let startIndex: Int
-        if let scheduleRowItem, menu.items.contains(scheduleRowItem) {
-            startIndex = menu.index(of: scheduleRowItem) + 1
-        } else {
-            startIndex = menu.items.count
-        }
-
-        let startItem = makeTimeRowItem(label: "Start", minutes: scheduleStartMinutes, isStart: true)
-        menu.insertItem(startItem, at: startIndex)
-        startRowItem = startItem
-
-        let endItem = makeTimeRowItem(label: "End", minutes: scheduleEndMinutes, isStart: false)
-        menu.insertItem(endItem, at: startIndex + 1)
-        endRowItem = endItem
-
-        menu.insertItem(buildSaveButtonRow(), at: startIndex + 2)
     }
 
     private func buildSaveButtonRow() -> NSMenuItem {
@@ -602,27 +532,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
         let item = NSMenuItem()
         item.view = container
-        saveRowItem = item
         return item
     }
 
-    private func removeScheduleEditingRows(from menu: NSMenu) {
-        for item in [startRowItem, endRowItem, saveRowItem] {
-            if let item, menu.items.contains(item) {
-                menu.removeItem(item)
-            }
+    private func setFieldValues(_ hourField: NSTextField?, _ minuteField: NSTextField?, minutes: Int) {
+        hourField?.stringValue = String(format: "%02d", minutes / 60)
+        minuteField?.stringValue = String(format: "%02d", minutes % 60)
+    }
+
+    private func updateScheduleRowsVisibility() {
+        let hidden = !scheduleEnabled
+        startRowItem?.isHidden = hidden
+        endRowItem?.isHidden = hidden
+        saveRowItem?.isHidden = hidden
+
+        if scheduleEnabled {
+            // Reset to the persisted values in case fields were left
+            // mid-edit (typed but not saved) from a previous time this was
+            // shown.
+            setFieldValues(startHourField, startMinuteField, minutes: scheduleStartMinutes)
+            setFieldValues(endHourField, endMinuteField, minutes: scheduleEndMinutes)
         }
-        startRowItem = nil
-        endRowItem = nil
-        saveRowItem = nil
-        startHourStepper = nil
-        startMinuteStepper = nil
-        endHourStepper = nil
-        endMinuteStepper = nil
-        startHourField = nil
-        startMinuteField = nil
-        endHourField = nil
-        endMinuteField = nil
     }
 
     @objc private func scheduleSwitchToggled(_ sender: NSSwitch) {
@@ -630,20 +560,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         scheduleLabelField?.stringValue = scheduleSubtitleText()
         log("StayActive: schedule toggled, enabled=\(scheduleEnabled)")
 
-        if let menu = statusItem.menu {
-            if scheduleEnabled {
-                insertScheduleEditingRows(into: menu)
-            } else {
-                removeScheduleEditingRows(from: menu)
-            }
-        }
-
+        updateScheduleRowsVisibility()
         evaluateSchedule()
     }
 
     @objc private func saveSchedule() {
-        scheduleStartMinutes = (startHourStepper?.integerValue ?? 0) * 60 + (startMinuteStepper?.integerValue ?? 0)
-        scheduleEndMinutes = (endHourStepper?.integerValue ?? 0) * 60 + (endMinuteStepper?.integerValue ?? 0)
+        let startHour = clampedTimeComponent(startHourField?.stringValue ?? "0", isMinute: false)
+        let startMinute = clampedTimeComponent(startMinuteField?.stringValue ?? "0", isMinute: true)
+        let endHour = clampedTimeComponent(endHourField?.stringValue ?? "0", isMinute: false)
+        let endMinute = clampedTimeComponent(endMinuteField?.stringValue ?? "0", isMinute: true)
+
+        scheduleStartMinutes = startHour * 60 + startMinute
+        scheduleEndMinutes = endHour * 60 + endMinute
+
+        setFieldValues(startHourField, startMinuteField, minutes: scheduleStartMinutes)
+        setFieldValues(endHourField, endMinuteField, minutes: scheduleEndMinutes)
 
         log("StayActive: schedule saved, start=\(scheduleStartMinutes)min, end=\(scheduleEndMinutes)min")
 

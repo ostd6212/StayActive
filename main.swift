@@ -335,15 +335,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     // monitor, so reusing one screen's absolute distance from the TOP EDGE
     // on another screen with a different menu bar height visibly misplaces
     // it (confirmed live: correct on the screen owning the real button
-    // window, off-center on the other one). Centering it within that other
-    // screen's full frame-vs-visibleFrame gap instead (an earlier attempt)
-    // was also confirmed live to sit a bit too low -- because the notch's
-    // extra reserved height sits ABOVE the icon row, not evenly around it,
-    // so the icon row itself starts at a fixed height immediately above
-    // visibleFrame regardless of how much (if any) extra notch space is
-    // reserved further up. Measuring the icon's distance above
-    // visibleFrame.maxY, instead of below frame.maxY, isolates just that
-    // fixed row height and replicates correctly regardless of a notch.
+    // window, off-center on the other one). Two attempts at deriving it
+    // from the owning screen's own measurement instead (centering in its
+    // full frame-vs-visibleFrame gap, then measuring its height above
+    // visibleFrame.maxY specifically) both still missed live on a 23"
+    // external monitor paired with a 14" notched MacBook -- a screen this
+    // different just isn't reliably predicted by another screen's
+    // measurement. Using AppKit's own NSStatusBar.system.thickness
+    // constant directly for the other screen(s), instead of inferring
+    // anything from the owning screen, is what actually matches.
     private func updateDotOverlayPosition() {
         guard isActive,
             let dot = dotView,
@@ -363,7 +363,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         // measure through it instead.
         let dotFrameOnScreen = buttonWindow.convertToScreen(dot.convert(dot.bounds, to: nil))
         let insetFromRight = ownerScreen.frame.maxX - dotFrameOnScreen.midX
-        let heightAboveVisibleFrame = dotFrameOnScreen.midY - ownerScreen.visibleFrame.maxY
+
+        // The owning screen's own measured height-above-visibleFrame
+        // (previous PR) was tried as the row height for the other
+        // screen(s) too, on the theory that a notch only adds extra space
+        // above a fixed-height row -- but confirmed live, that measurement
+        // (taken on a notched MacBook display) still didn't match a 23"
+        // external monitor's own menu bar row height; only the owning
+        // (MacBook) screen's position was ever actually right. Rather than
+        // trust one screen's measurement to predict another's, use
+        // AppKit's own authoritative constant for the standard menu bar
+        // row height directly.
+        let standardRowHeight = NSStatusBar.system.thickness
 
         let screens = NSScreen.screens
         while dotOverlayWindows.count < screens.count {
@@ -388,7 +399,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             } else {
                 origin = NSPoint(
                     x: screen.frame.maxX - insetFromRight - size.width / 2,
-                    y: screen.visibleFrame.maxY + heightAboveVisibleFrame - size.height / 2
+                    y: screen.visibleFrame.maxY + standardRowHeight / 2 - size.height / 2
                 )
             }
             // A fractional origin gets snapped to the backing pixel grid by

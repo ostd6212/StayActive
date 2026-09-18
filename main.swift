@@ -297,36 +297,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
     // Small overlay image centered on top of the ring. Template (like the
     // ring) when inactive, so it's tinted identically and reads as part of
-    // the same native-colored icon; explicit green, non-template, only
-    // while active.
+    // the same native-colored icon.
+    //
+    // While active it used to be a hand-drawn CGContext bitmap filled with
+    // an explicit RGB green -- but that literal color shifted to blue when
+    // rendered on a non-key screen's dimmed menu bar (confirmed live), and
+    // disabling vibrancy on its view didn't stop it either, so the shift
+    // isn't coming from the app's own vibrant-material blending. It's drawn
+    // as an SF Symbol with a palette-color configuration instead: that's
+    // Apple's own sanctioned mechanism for a permanently-colored (non-
+    // template) glyph in system UI, and unlike a raw bitmap it's expected to
+    // carry its palette color through system color transforms correctly.
     private func makeDotImage(active: Bool) -> NSImage {
         // Even-numbered size: centering a 6pt view in an 18pt one lands on
         // a whole number (6pt margin each side); an odd 7 landed on a
         // fractional 5.5pt margin.
         let size = NSSize(width: 6, height: 6)
-        let image = NSImage(size: size)
 
+        if active {
+            let green = NSColor(calibratedRed: 0.20, green: 0.78, blue: 0.35, alpha: 1.0)
+            let pointConfig = NSImage.SymbolConfiguration(pointSize: size.width, weight: .regular)
+            let paletteConfig = NSImage.SymbolConfiguration(paletteColors: [green])
+            let config = pointConfig.applying(paletteConfig)
+            if let symbol = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: nil)?
+                .withSymbolConfiguration(config) {
+                symbol.isTemplate = false
+                return symbol
+            }
+            // Fallback for the unlikely case the symbol lookup fails.
+        }
+
+        let image = NSImage(size: size)
         image.lockFocus()
         defer { image.unlockFocus() }
-
         guard let ctx = NSGraphicsContext.current?.cgContext else { return image }
-
-        // Slight alpha reduction on the active (non-template) green: unlike
-        // the ring, this dot can't be a template image (it needs its own
-        // explicit color), so it doesn't participate in the automatic
-        // dimming macOS applies to menu bar content on a non-key screen in
-        // multi-monitor setups -- confirmed live, it stayed fully saturated
-        // while every template icon around it (including our own ring)
-        // dimmed. There's no public API to detect that per-screen dimmed
-        // state to match it exactly, so this just softens the color enough
-        // that the mismatch reads as less jarring in either case.
-        let color: NSColor = active
-            ? NSColor(calibratedRed: 0.20, green: 0.78, blue: 0.35, alpha: 0.85)
-            : NSColor.black
-        ctx.setFillColor(color.cgColor)
+        ctx.setFillColor(NSColor.black.cgColor)
         ctx.fillEllipse(in: NSRect(origin: .zero, size: size))
-
-        image.isTemplate = !active
+        image.isTemplate = true
         return image
     }
 

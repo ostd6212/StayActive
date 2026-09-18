@@ -297,43 +297,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
     // Small overlay image centered on top of the ring. Template (like the
     // ring) when inactive, so it's tinted identically and reads as part of
-    // the same native-colored icon.
+    // the same native-colored icon; explicit green, non-template, only
+    // while active.
     //
-    // While active it used to be a hand-drawn CGContext bitmap filled with
-    // an explicit RGB green -- but that literal color shifted to blue when
-    // rendered on a non-key screen's dimmed menu bar (confirmed live), and
-    // disabling vibrancy on its view didn't stop it either, so the shift
-    // isn't coming from the app's own vibrant-material blending. It's drawn
-    // as an SF Symbol with a palette-color configuration instead: that's
-    // Apple's own sanctioned mechanism for a permanently-colored (non-
-    // template) glyph in system UI, and unlike a raw bitmap it's expected to
-    // carry its palette color through system color transforms correctly.
+    // An SF Symbol (circle.fill) with a palette-color configuration was
+    // tried here instead of this hand-drawn bitmap, on the theory that
+    // Apple's own colored-glyph mechanism would survive the menu bar's
+    // dimming transform better than a raw bitmap -- but a symbol's glyph
+    // doesn't fill/center in a fixed-size canvas the way a manually drawn
+    // circle does (confirmed live: it rendered smaller and off-center), so
+    // that approach was reverted.
     private func makeDotImage(active: Bool) -> NSImage {
         // Even-numbered size: centering a 6pt view in an 18pt one lands on
         // a whole number (6pt margin each side); an odd 7 landed on a
         // fractional 5.5pt margin.
         let size = NSSize(width: 6, height: 6)
-
-        if active {
-            let green = NSColor(calibratedRed: 0.20, green: 0.78, blue: 0.35, alpha: 1.0)
-            let pointConfig = NSImage.SymbolConfiguration(pointSize: size.width, weight: .regular)
-            let paletteConfig = NSImage.SymbolConfiguration(paletteColors: [green])
-            let config = pointConfig.applying(paletteConfig)
-            if let symbol = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: nil)?
-                .withSymbolConfiguration(config) {
-                symbol.isTemplate = false
-                return symbol
-            }
-            // Fallback for the unlikely case the symbol lookup fails.
-        }
-
         let image = NSImage(size: size)
+
         image.lockFocus()
         defer { image.unlockFocus() }
+
         guard let ctx = NSGraphicsContext.current?.cgContext else { return image }
-        ctx.setFillColor(NSColor.black.cgColor)
+
+        // Fully opaque, explicit-sRGB green (previously a legacy calibrated-
+        // RGB color at 85% alpha). Two changes, both aimed at the same
+        // green-to-blue shift on a dimmed non-key-screen menu bar: (1) any
+        // alpha below 1.0 blends this pixel with whatever the system draws
+        // underneath, and if that backdrop carries its own tint while
+        // dimmed, that tint bleeds into ours -- exactly the kind of thing
+        // that would shift a color's hue rather than just its brightness,
+        // which is what was actually observed. Full opacity removes that
+        // blending entirely. (2) NSColor(calibratedRed:) is the legacy
+        // generic/"calibrated" RGB color space, which a modern color-
+        // managed compositing path could reinterpret differently than a
+        // color declared unambiguously in sRGB.
+        let color: NSColor = active
+            ? NSColor(srgbRed: 0.20, green: 0.78, blue: 0.35, alpha: 1.0)
+            : NSColor.black
+        ctx.setFillColor(color.cgColor)
         ctx.fillEllipse(in: NSRect(origin: .zero, size: size))
-        image.isTemplate = true
+
+        image.isTemplate = !active
         return image
     }
 

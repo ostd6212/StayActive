@@ -43,7 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
     private var statusItem: NSStatusItem!
     private var dotView: NSImageView?
-    private var dotOverlayWindow: NSWindow?
+    private var dotOverlayWindows: [NSWindow] = []
     private var dotOverlayTimer: Timer?
     private var timer: Timer?
     private var isActive = false
@@ -176,7 +176,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             dotView = dot
         }
 
-        setupDotOverlayWindow()
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(screenParametersChanged),
@@ -276,9 +275,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         }
     }
 
-    // MARK: - Dot overlay window (active-state green dot)
+    // MARK: - Dot overlay windows (active-state green dot)
 
-    private func setupDotOverlayWindow() {
+    private func makeDotOverlayWindow() -> NSWindow {
         let size = NSSize(width: 6, height: 6)
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: size),
@@ -296,12 +295,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         // vanish or lag behind during a space switch.
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         window.contentView = DotOverlayView(frame: NSRect(origin: .zero, size: size))
-        dotOverlayWindow = window
+        return window
     }
 
     private func showDotOverlay() {
         updateDotOverlayPosition()
-        dotOverlayWindow?.orderFrontRegardless()
 
         // The status item's on-screen position isn't observable directly
         // (no public notification fires when it moves -- e.g. the user
@@ -317,23 +315,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     private func hideDotOverlay() {
         dotOverlayTimer?.invalidate()
         dotOverlayTimer = nil
-        dotOverlayWindow?.orderOut(nil)
+        dotOverlayWindows.forEach { $0.orderOut(nil) }
     }
 
+    // In macOS's "Displays have separate Spaces" setup (the default), a
+    // menu extra is mirrored onto every screen's own menu bar, but AppKit
+    // only ever hands this process one real NSWindow for it
+    // (statusItem.button.window) -- tied to whichever single screen
+    // currently owns it. There's no API for where the *mirrored* copies
+    // land on the other screens' menu bars (confirmed live: floating a
+    // single overlay window only fixed the color on the screen that owns
+    // the real button window -- the icon on every other screen lost its
+    // dot entirely). Menu extras keep the same order and spacing on every
+    // mirrored menu bar, though, so this instead floats one overlay window
+    // per screen, each placed the same distance from its own screen's
+    // top-right corner as the real icon sits from its own screen's
+    // top-right corner.
     private func updateDotOverlayPosition() {
-        guard let overlay = dotOverlayWindow,
+        guard isActive,
             let dot = dotView,
-            let buttonWindow = statusItem.button?.window
+            let buttonWindow = statusItem.button?.window,
+            let ownerScreen = buttonWindow.screen
         else { return }
-        let dotFrameInButtonWindow = dot.convert(dot.bounds, to: nil)
-        let dotFrameOnScreen = buttonWindow.convertToScreen(dotFrameInButtonWindow)
-        overlay.setFrame(dotFrameOnScreen, display: true)
+
+        let dotFrameOnScreen = buttonWindow.convertToScreen(dot.convert(dot.bounds, to: nil))
+        let insetFromRight = ownerScreen.frame.maxX - dotFrameOnScreen.midX
+        let insetFromTop = ownerScreen.frame.maxY - dotFrameOnScreen.midY
+
+        let screens = NSScreen.screens
+        while dotOverlayWindows.count < screens.count {
+            dotOverlayWindows.append(makeDotOverlayWindow())
+        }
+        while dotOverlayWindows.count > screens.count {
+            dotOverlayWindows.removeLast().orderOut(nil)
+        }
+
+        for (window, screen) in zip(dotOverlayWindows, screens) {
+            let size = window.frame.size
+            window.setFrameOrigin(
+                NSPoint(
+                    x: screen.frame.maxX - insetFromRight - size.width / 2,
+                    y: screen.frame.maxY - insetFromTop - size.height / 2
+                )
+            )
+            window.orderFrontRegardless()
+        }
     }
 
     @objc private func screenParametersChanged() {
-        if isActive {
-            updateDotOverlayPosition()
-        }
+        updateDotOverlayPosition()
     }
 
     @objc private func quit() {

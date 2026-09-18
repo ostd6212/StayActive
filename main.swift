@@ -332,14 +332,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     //
     // The vertical position does NOT replicate the same way: a notched
     // MacBook display reserves a taller menu bar than a plain external
-    // monitor, so reusing one screen's absolute distance from the top on
-    // another screen with a different menu bar height visibly misplaces it
-    // (confirmed live: correct on the screen owning the real button
-    // window, off-center on the other one). Deriving the vertical position
-    // from each screen's OWN menu bar height instead -- via the gap
-    // between frame and visibleFrame, which the system already adjusts per
-    // screen for exactly this -- keeps it centered on every screen
-    // regardless of that difference.
+    // monitor, so reusing one screen's absolute distance from the TOP EDGE
+    // on another screen with a different menu bar height visibly misplaces
+    // it (confirmed live: correct on the screen owning the real button
+    // window, off-center on the other one). Centering it within that other
+    // screen's full frame-vs-visibleFrame gap instead (an earlier attempt)
+    // was also confirmed live to sit a bit too low -- because the notch's
+    // extra reserved height sits ABOVE the icon row, not evenly around it,
+    // so the icon row itself starts at a fixed height immediately above
+    // visibleFrame regardless of how much (if any) extra notch space is
+    // reserved further up. Measuring the icon's distance above
+    // visibleFrame.maxY, instead of below frame.maxY, isolates just that
+    // fixed row height and replicates correctly regardless of a notch.
     private func updateDotOverlayPosition() {
         guard isActive,
             let dot = dotView,
@@ -359,6 +363,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         // measure through it instead.
         let dotFrameOnScreen = buttonWindow.convertToScreen(dot.convert(dot.bounds, to: nil))
         let insetFromRight = ownerScreen.frame.maxX - dotFrameOnScreen.midX
+        let heightAboveVisibleFrame = dotFrameOnScreen.midY - ownerScreen.visibleFrame.maxY
 
         let screens = NSScreen.screens
         while dotOverlayWindows.count < screens.count {
@@ -381,10 +386,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
                     y: dotFrameOnScreen.midY - size.height / 2
                 )
             } else {
-                let menuBarHeight = screen.frame.maxY - screen.visibleFrame.maxY
                 origin = NSPoint(
                     x: screen.frame.maxX - insetFromRight - size.width / 2,
-                    y: screen.frame.maxY - menuBarHeight / 2 - size.height / 2
+                    y: screen.visibleFrame.maxY + heightAboveVisibleFrame - size.height / 2
                 )
             }
             window.setFrameOrigin(origin)

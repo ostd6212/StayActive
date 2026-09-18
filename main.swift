@@ -298,8 +298,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
         guard let ctx = NSGraphicsContext.current?.cgContext else { return image }
 
+        // Slight alpha reduction on the active (non-template) green: unlike
+        // the ring, this dot can't be a template image (it needs its own
+        // explicit color), so it doesn't participate in the automatic
+        // dimming macOS applies to menu bar content on a non-key screen in
+        // multi-monitor setups -- confirmed live, it stayed fully saturated
+        // while every template icon around it (including our own ring)
+        // dimmed. There's no public API to detect that per-screen dimmed
+        // state to match it exactly, so this just softens the color enough
+        // that the mismatch reads as less jarring in either case.
         let color: NSColor = active
-            ? NSColor(calibratedRed: 0.20, green: 0.78, blue: 0.35, alpha: 1.0)
+            ? NSColor(calibratedRed: 0.20, green: 0.78, blue: 0.35, alpha: 0.85)
             : NSColor.black
         ctx.setFillColor(color.cgColor)
         ctx.fillEllipse(in: NSRect(origin: .zero, size: size))

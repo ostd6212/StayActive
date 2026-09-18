@@ -342,11 +342,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     // regardless of that difference.
     private func updateDotOverlayPosition() {
         guard isActive,
+            let dot = dotView,
             let buttonWindow = statusItem.button?.window,
             let ownerScreen = buttonWindow.screen
         else { return }
 
-        let insetFromRight = ownerScreen.frame.maxX - buttonWindow.frame.midX
+        // buttonWindow.frame.mid{X,Y} was tried here as a stand-in for the
+        // dot's true position (to avoid depending on the hidden dotView) --
+        // but the status item's window isn't necessarily centered exactly
+        // on its own icon (there can be a little asymmetric padding around
+        // it), and that mismatch showed up live as the dot sitting slightly
+        // below center on the very screen that owns this window. dotView's
+        // own layout, even while hidden, is the actual ground truth for
+        // where the ring+dot sit (this combination was confirmed correctly
+        // centered before any of the overlay-window work started), so
+        // measure through it instead.
+        let dotFrameOnScreen = buttonWindow.convertToScreen(dot.convert(dot.bounds, to: nil))
+        let insetFromRight = ownerScreen.frame.maxX - dotFrameOnScreen.midX
 
         let screens = NSScreen.screens
         while dotOverlayWindows.count < screens.count {
@@ -362,14 +374,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             if screen === ownerScreen {
                 // The screen that actually owns the real button window --
                 // use its exact measured position rather than the
-                // menu-bar-height approximation below, which was only ever
-                // meant to stand in for screens we have no real geometry
-                // for. Applying it here too regressed the vertical
-                // centering on this screen (confirmed live) even though it
-                // fixed the other one.
+                // menu-bar-height approximation below, which is only meant
+                // to stand in for screens we have no real geometry for.
                 origin = NSPoint(
-                    x: buttonWindow.frame.midX - size.width / 2,
-                    y: buttonWindow.frame.midY - size.height / 2
+                    x: dotFrameOnScreen.midX - size.width / 2,
+                    y: dotFrameOnScreen.midY - size.height / 2
                 )
             } else {
                 let menuBarHeight = screen.frame.maxY - screen.visibleFrame.maxY

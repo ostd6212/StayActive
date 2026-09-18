@@ -13,6 +13,19 @@ func log(_ message: String) {
     os_log("%{public}@", log: stayActiveLog, type: .info, message)
 }
 
+// Menu bar content normally renders through a "vibrant" blend against the
+// bar's material, which is what lets the ring's template image track
+// light/dark and per-screen dimming exactly like every other menu bar icon.
+// That same vibrant blending distorts a literal explicit color, though --
+// confirmed live: the green dot shifted to blue on a dimmed (non-key
+// screen) menu bar. Opting this view out of vibrancy makes it draw its
+// exact RGB value regardless of surrounding material, at the cost of not
+// auto-dimming on an inactive screen -- a plain, correctly-colored green
+// beats one that silently turns blue.
+private final class NonVibrantImageView: NSImageView {
+    override var allowsVibrancy: Bool { false }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
     private var statusItem: NSStatusItem!
@@ -128,7 +141,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             ring.image = makeRingImage()
             button.addSubview(ring)
 
-            let dot = NSImageView()
+            let dot = NonVibrantImageView()
             dot.translatesAutoresizingMaskIntoConstraints = false
             dot.image = makeDotImage(active: isActive)
             button.addSubview(dot)

@@ -392,12 +392,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
                 )
             }
             // A fractional origin gets snapped to the backing pixel grid by
-            // the window server, and that snap consistently rounds down
-            // rather than to the nearest pixel -- confirmed live as a
-            // slight (sub-point) low bias on every screen. Rounding here
-            // ourselves first removes that bias.
-            origin.x = origin.x.rounded()
-            origin.y = origin.y.rounded()
+            // the window server. Rounding to the nearest whole POINT here
+            // was tried first, but a Retina screen's actual pixel grid is
+            // finer than that (0.5pt steps at 2x) -- confirmed live: it
+            // fixed one screen but overshot in the opposite direction on
+            // the other, consistent with rounding to a grid coarser than
+            // the real one. Round to the nearest actual backing pixel for
+            // THIS screen instead, via its own scale factor.
+            let scale = screen.backingScaleFactor
+            origin.x = (origin.x * scale).rounded() / scale
+            origin.y = (origin.y * scale).rounded() / scale
             window.setFrameOrigin(origin)
             window.orderFrontRegardless()
         }

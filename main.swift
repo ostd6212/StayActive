@@ -13,23 +13,38 @@ func log(_ message: String) {
     os_log("%{public}@", log: stayActiveLog, type: .info, message)
 }
 
-// Menu bar content normally renders through a "vibrant" blend against the
-// bar's material, which is what lets the ring's template image track
-// light/dark and per-screen dimming exactly like every other menu bar icon.
-// That same vibrant blending distorts a literal explicit color, though --
-// confirmed live: the green dot shifted to blue on a dimmed (non-key
-// screen) menu bar. Opting this view out of vibrancy makes it draw its
-// exact RGB value regardless of surrounding material, at the cost of not
-// auto-dimming on an inactive screen -- a plain, correctly-colored green
-// beats one that silently turns blue.
+// Used for the inactive-state dot, which is a template image like the
+// ring, so vibrancy is actually fine for it; kept non-vibrant anyway since
+// that was the first (unsuccessful) attempt at the active-dot color shift
+// and there's no reason to reintroduce vibrancy-dependent behavior here.
 private final class NonVibrantImageView: NSImageView {
     override var allowsVibrancy: Bool { false }
+}
+
+// Draws the active-state green dot in a small separate borderless NSWindow
+// floated on top of the status item's icon, instead of as content inside
+// the status item's own button. Two prior attempts to keep this dot's
+// color from shifting to blue on a dimmed non-key-screen menu bar --
+// disabling vibrancy on its NSImageView, and drawing it fully opaque in
+// explicit sRGB -- both failed to stop the shift (confirmed live both
+// times), which means whatever transform causes it is applied to the
+// status item's own backing content, not controllable from a subview
+// property or a color choice. A completely separate window is composited
+// by the window server as an ordinary opaque layer on top, outside that
+// per-menu-bar-surface transform entirely.
+private final class DotOverlayView: NSView {
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor(srgbRed: 0.20, green: 0.78, blue: 0.35, alpha: 1.0).setFill()
+        NSBezierPath(ovalIn: bounds).fill()
+    }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
     private var statusItem: NSStatusItem!
     private var dotView: NSImageView?
+    private var dotOverlayWindow: NSWindow?
+    private var dotOverlayTimer: Timer?
     private var timer: Timer?
     private var isActive = false
 
@@ -103,6 +118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         log("StayActive: applicationWillTerminate - cleaning up")
         timer?.invalidate()
         scheduleCheckTimer?.invalidate()
+        dotOverlayTimer?.invalidate()
         endBackgroundActivity()
         releaseDisplaySleepAssertion()
     }
@@ -118,32 +134,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
 
-        // Both the ring and the dot are separate overlay subviews rather
-        // than one drawn into the button's own .image, and the dot is
-        // centered on the RING's own anchors, not the button's -- centering
-        // each independently on the button left them slightly off from one
-        // another in practice (likely NSStatusBarButton's own image layout
-        // doesn't put its image at exactly the same point as the button's
-        // geometric bounds center). Anchoring the dot to the ring directly
-        // makes them share the exact same reference point, so they can't
-        // drift apart regardless of any such button-level quirk.
-        //
-        // isTemplate re-tints an entire NSImage uniformly from its alpha
-        // mask, so there's no way for one image to have a ring that always
-        // matches every other menu bar icon's native color/vibrancy AND a
-        // dot with its own explicit green -- that's why these are two
-        // separate images (ring: always template, never redrawn; dot:
-        // template when off so it matches the ring exactly, explicit green
-        // when active) instead of one.
+        // The ring and the (inactive-only) dot are separate overlay
+        // subviews rather than one drawn into the button's own .image, and
+        // the dot is centered on the RING's own anchors, not the button's
+        // -- centering each independently on the button left them slightly
+        // off from one another in practice (likely NSStatusBarButton's own
+        // image layout doesn't put its image at exactly the same point as
+        // the button's geometric bounds center). Anchoring the dot to the
+        // ring directly makes them share the exact same reference point, so
+        // they can't drift apart regardless of any such button-level quirk.
+        // The active-state green dot is a separate floating window (see
+        // DotOverlayView) positioned over this same spot instead of a third
+        // state for this image, so it isn't subject to whatever transform
+        // the status item's own backing content goes through.
         if let button = statusItem.button {
             let ring = NSImageView()
             ring.translatesAutoresizingMaskIntoConstraints = false
             ring.image = makeRingImage()
             button.addSubview(ring)
 
+            // Always the inactive (template, black) dot now -- the active
+            // green state is drawn by a separate floating window (see
+            // DotOverlayView) instead of by swapping this view's image, so
+            // this view only needs hiding/showing, never redrawing.
             let dot = NonVibrantImageView()
             dot.translatesAutoresizingMaskIntoConstraints = false
-            dot.image = makeDotImage(active: isActive)
+            dot.image = makeInactiveDotImage()
             button.addSubview(dot)
 
             NSLayoutConstraint.activate([
@@ -159,6 +175,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             ])
             dotView = dot
         }
+
+        setupDotOverlayWindow()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(screenParametersChanged),
+            name: NSApplication.didChangeScreenParametersNotification,
+            object: nil
+        )
 
         let menu = NSMenu()
 
@@ -234,7 +258,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         isActive = newValue
         log("StayActive: setActive(\(newValue)) reason=\(reason)")
 
-        dotView?.image = makeDotImage(active: isActive)
+        dotView?.isHidden = isActive
+        if isActive {
+            showDotOverlay()
+        } else {
+            hideDotOverlay()
+        }
         statusItem.menu?.item(at: 0)?.title = toggleTitle()
 
         if isActive {
@@ -244,6 +273,66 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             timer?.invalidate()
             timer = nil
             releaseDisplaySleepAssertion()
+        }
+    }
+
+    // MARK: - Dot overlay window (active-state green dot)
+
+    private func setupDotOverlayWindow() {
+        let size = NSSize(width: 6, height: 6)
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.hasShadow = false
+        window.ignoresMouseEvents = true
+        window.level = .statusBar
+        // Menu extras stay visible across every space and full-screen app on
+        // their screen; this overlay needs the same behavior so it doesn't
+        // vanish or lag behind during a space switch.
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        window.contentView = DotOverlayView(frame: NSRect(origin: .zero, size: size))
+        dotOverlayWindow = window
+    }
+
+    private func showDotOverlay() {
+        updateDotOverlayPosition()
+        dotOverlayWindow?.orderFrontRegardless()
+
+        // The status item's on-screen position isn't observable directly
+        // (no public notification fires when it moves -- e.g. the user
+        // reordering menu extras, or a monitor being connected/disconnected
+        // shifting layout), so keep it in sync with a cheap periodic
+        // recheck for as long as the overlay is actually showing.
+        dotOverlayTimer?.invalidate()
+        dotOverlayTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.updateDotOverlayPosition()
+        }
+    }
+
+    private func hideDotOverlay() {
+        dotOverlayTimer?.invalidate()
+        dotOverlayTimer = nil
+        dotOverlayWindow?.orderOut(nil)
+    }
+
+    private func updateDotOverlayPosition() {
+        guard let overlay = dotOverlayWindow,
+            let dot = dotView,
+            let buttonWindow = statusItem.button?.window
+        else { return }
+        let dotFrameInButtonWindow = dot.convert(dot.bounds, to: nil)
+        let dotFrameOnScreen = buttonWindow.convertToScreen(dotFrameInButtonWindow)
+        overlay.setFrame(dotFrameOnScreen, display: true)
+    }
+
+    @objc private func screenParametersChanged() {
+        if isActive {
+            updateDotOverlayPosition()
         }
     }
 
@@ -258,10 +347,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     // every other menu bar icon (same color, same vibrancy blend against
     // the bar) in every appearance -- drawn once and never redrawn, since
     // its look never depends on app state. The active/inactive indicator
-    // lives entirely in the separate dot overlay (see makeDotImage) rather
-    // than here, because isTemplate re-tints an entire image uniformly
-    // from its alpha mask: a single image can't have a native-matching
-    // ring and an explicitly-colored dot at the same time.
+    // lives entirely in the separate dot views (see makeInactiveDotImage
+    // and DotOverlayView) rather than here, because isTemplate re-tints an
+    // entire image uniformly from its alpha mask: a single image can't have
+    // a native-matching ring and an explicitly-colored dot at the same time.
     private func makeRingImage() -> NSImage {
         let size = NSSize(width: 18, height: 18)
         let image = NSImage(size: size)
@@ -295,19 +384,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         return image
     }
 
-    // Small overlay image centered on top of the ring. Template (like the
-    // ring) when inactive, so it's tinted identically and reads as part of
-    // the same native-colored icon; explicit green, non-template, only
-    // while active.
-    //
-    // An SF Symbol (circle.fill) with a palette-color configuration was
-    // tried here instead of this hand-drawn bitmap, on the theory that
-    // Apple's own colored-glyph mechanism would survive the menu bar's
-    // dimming transform better than a raw bitmap -- but a symbol's glyph
-    // doesn't fill/center in a fixed-size canvas the way a manually drawn
-    // circle does (confirmed live: it rendered smaller and off-center), so
-    // that approach was reverted.
-    private func makeDotImage(active: Bool) -> NSImage {
+    // Small overlay image centered on top of the ring, shown only while
+    // inactive. Always a template image so it's tinted identically to the
+    // ring and reads as part of the same native-colored icon. The active
+    // state's green dot is a separate floating window instead (see
+    // DotOverlayView) -- two attempts to keep an explicit color drawn into
+    // this same view from shifting hue on a dimmed non-key-screen menu bar
+    // (disabling vibrancy, then full opacity + explicit sRGB) both failed,
+    // pointing at a transform applied to the status item's own backing
+    // content rather than anything fixable via this view's image.
+    private func makeInactiveDotImage() -> NSImage {
         // Even-numbered size: centering a 6pt view in an 18pt one lands on
         // a whole number (6pt margin each side); an odd 7 landed on a
         // fractional 5.5pt margin.
@@ -318,26 +404,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         defer { image.unlockFocus() }
 
         guard let ctx = NSGraphicsContext.current?.cgContext else { return image }
-
-        // Fully opaque, explicit-sRGB green (previously a legacy calibrated-
-        // RGB color at 85% alpha). Two changes, both aimed at the same
-        // green-to-blue shift on a dimmed non-key-screen menu bar: (1) any
-        // alpha below 1.0 blends this pixel with whatever the system draws
-        // underneath, and if that backdrop carries its own tint while
-        // dimmed, that tint bleeds into ours -- exactly the kind of thing
-        // that would shift a color's hue rather than just its brightness,
-        // which is what was actually observed. Full opacity removes that
-        // blending entirely. (2) NSColor(calibratedRed:) is the legacy
-        // generic/"calibrated" RGB color space, which a modern color-
-        // managed compositing path could reinterpret differently than a
-        // color declared unambiguously in sRGB.
-        let color: NSColor = active
-            ? NSColor(srgbRed: 0.20, green: 0.78, blue: 0.35, alpha: 1.0)
-            : NSColor.black
-        ctx.setFillColor(color.cgColor)
+        ctx.setFillColor(NSColor.black.cgColor)
         ctx.fillEllipse(in: NSRect(origin: .zero, size: size))
 
-        image.isTemplate = !active
+        image.isTemplate = true
         return image
     }
 

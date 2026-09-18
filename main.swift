@@ -358,13 +358,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
         for (window, screen) in zip(dotOverlayWindows, screens) {
             let size = window.frame.size
-            let menuBarHeight = screen.frame.maxY - screen.visibleFrame.maxY
-            window.setFrameOrigin(
-                NSPoint(
+            let origin: NSPoint
+            if screen === ownerScreen {
+                // The screen that actually owns the real button window --
+                // use its exact measured position rather than the
+                // menu-bar-height approximation below, which was only ever
+                // meant to stand in for screens we have no real geometry
+                // for. Applying it here too regressed the vertical
+                // centering on this screen (confirmed live) even though it
+                // fixed the other one.
+                origin = NSPoint(
+                    x: buttonWindow.frame.midX - size.width / 2,
+                    y: buttonWindow.frame.midY - size.height / 2
+                )
+            } else {
+                let menuBarHeight = screen.frame.maxY - screen.visibleFrame.maxY
+                origin = NSPoint(
                     x: screen.frame.maxX - insetFromRight - size.width / 2,
                     y: screen.frame.maxY - menuBarHeight / 2 - size.height / 2
                 )
-            )
+            }
+            window.setFrameOrigin(origin)
             window.orderFrontRegardless()
         }
     }

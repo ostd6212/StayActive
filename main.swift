@@ -335,15 +335,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     // monitor, so reusing one screen's absolute distance from the TOP EDGE
     // on another screen with a different menu bar height visibly misplaces
     // it (confirmed live: correct on the screen owning the real button
-    // window, off-center on the other one). Two attempts at deriving it
-    // from the owning screen's own measurement instead (centering in its
-    // full frame-vs-visibleFrame gap, then measuring its height above
-    // visibleFrame.maxY specifically) both still missed live on a 23"
-    // external monitor paired with a 14" notched MacBook -- a screen this
-    // different just isn't reliably predicted by another screen's
-    // measurement. Using AppKit's own NSStatusBar.system.thickness
-    // constant directly for the other screen(s), instead of inferring
-    // anything from the owning screen, is what actually matches.
+    // window, off-center on the other one). Measuring the owning screen's
+    // height above its own visibleFrame.maxY and replicating that distance
+    // is the best approximation found so far for the other screen(s) --
+    // it's only off by a couple of points on a 23" external monitor paired
+    // with a 14" notched MacBook, which is what these two screens actually
+    // are. NSStatusBar.system.thickness was tried as a screen-independent
+    // alternative and was confirmed live to be considerably worse (it
+    // doesn't reflect the actual current menu bar height on modern macOS),
+    // so this measurement-based approach, imperfect as it is, stays.
     private func updateDotOverlayPosition() {
         guard isActive,
             let dot = dotView,
@@ -364,17 +364,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         let dotFrameOnScreen = buttonWindow.convertToScreen(dot.convert(dot.bounds, to: nil))
         let insetFromRight = ownerScreen.frame.maxX - dotFrameOnScreen.midX
 
-        // The owning screen's own measured height-above-visibleFrame
-        // (previous PR) was tried as the row height for the other
-        // screen(s) too, on the theory that a notch only adds extra space
-        // above a fixed-height row -- but confirmed live, that measurement
-        // (taken on a notched MacBook display) still didn't match a 23"
-        // external monitor's own menu bar row height; only the owning
-        // (MacBook) screen's position was ever actually right. Rather than
-        // trust one screen's measurement to predict another's, use
-        // AppKit's own authoritative constant for the standard menu bar
-        // row height directly.
-        let standardRowHeight = NSStatusBar.system.thickness
+        // NSStatusBar.system.thickness was tried here as an authoritative,
+        // screen-independent row height, instead of the owning screen's own
+        // measurement -- but confirmed live, it put the dot far too low on
+        // BOTH the MacBook and the external monitor whenever either one was
+        // the non-owning screen, a much bigger miss than the small one this
+        // was meant to fix. It's evidently not a reliable stand-in for the
+        // actual current menu bar height on modern macOS. Reverted to the
+        // owning screen's own height-above-visibleFrame measurement, which
+        // was only off by a couple of points on the external monitor --
+        // far closer than this.
+        let heightAboveVisibleFrame = dotFrameOnScreen.midY - ownerScreen.visibleFrame.maxY
 
         let screens = NSScreen.screens
         while dotOverlayWindows.count < screens.count {
@@ -399,7 +399,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             } else {
                 origin = NSPoint(
                     x: screen.frame.maxX - insetFromRight - size.width / 2,
-                    y: screen.visibleFrame.maxY + standardRowHeight / 2 - size.height / 2
+                    y: screen.visibleFrame.maxY + heightAboveVisibleFrame - size.height / 2
                 )
             }
             // A fractional origin gets snapped to the backing pixel grid by

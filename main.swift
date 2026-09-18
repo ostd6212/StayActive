@@ -375,7 +375,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
         for (window, screen) in zip(dotOverlayWindows, screens) {
             let size = window.frame.size
-            let origin: NSPoint
+            var origin: NSPoint
             if screen === ownerScreen {
                 // The screen that actually owns the real button window --
                 // use its exact measured position rather than the
@@ -391,6 +391,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
                     y: screen.visibleFrame.maxY + heightAboveVisibleFrame - size.height / 2
                 )
             }
+            // A fractional origin gets snapped to the backing pixel grid by
+            // the window server, and that snap consistently rounds down
+            // rather than to the nearest pixel -- confirmed live as a
+            // slight (sub-point) low bias on every screen. Rounding here
+            // ourselves first removes that bias.
+            origin.x = origin.x.rounded()
+            origin.y = origin.y.rounded()
             window.setFrameOrigin(origin)
             window.orderFrontRegardless()
         }

@@ -45,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     private var dotView: NSImageView?
     private var dotOverlayWindows: [NSWindow] = []
     private var dotOverlayTimer: Timer?
+    private var dotOverlayDebounceTimer: Timer?
 
     // Per-screen offsets (distance from that screen's own right edge, and
     // height above that screen's own visibleFrame.maxY), recorded from real
@@ -133,6 +134,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         timer?.invalidate()
         scheduleCheckTimer?.invalidate()
         dotOverlayTimer?.invalidate()
+        dotOverlayDebounceTimer?.invalidate()
         endBackgroundActivity()
         releaseDisplaySleepAssertion()
     }
@@ -214,13 +216,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         if let buttonWindow = statusItem.button?.window {
             NotificationCenter.default.addObserver(
                 self,
-                selector: #selector(repositionDotOverlay),
+                selector: #selector(buttonWindowGeometryChanged),
                 name: NSWindow.didMoveNotification,
                 object: buttonWindow
             )
             NotificationCenter.default.addObserver(
                 self,
-                selector: #selector(repositionDotOverlay),
+                selector: #selector(buttonWindowGeometryChanged),
                 name: NSWindow.didResizeNotification,
                 object: buttonWindow
             )
@@ -460,6 +462,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
     @objc private func repositionDotOverlay() {
         updateDotOverlayPosition()
+    }
+
+    // The button's window goes through several rapid intermediate frame
+    // changes of its own during a click's highlight/press-and-release
+    // animation (confirmed live: clicking Start visibly left the dot
+    // shifted down afterward on one screen -- reacting to every one of
+    // those intermediate frames could latch onto a not-yet-settled one
+    // instead of the final, correct position). Debounce briefly so a burst
+    // of move/resize notifications from one interaction only measures once
+    // things have settled.
+    @objc private func buttonWindowGeometryChanged() {
+        dotOverlayDebounceTimer?.invalidate()
+        dotOverlayDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: false) { [weak self] _ in
+            self?.updateDotOverlayPosition()
+        }
     }
 
     @objc private func quit() {

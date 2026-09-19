@@ -45,6 +45,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     private var dotView: NSImageView?
     private var dotOverlayWindows: [NSWindow] = []
     private var dotOverlayTimer: Timer?
+
+    // Per-screen offsets (distance from that screen's own right edge, and
+    // height above that screen's own visibleFrame.maxY), recorded from real
+    // measurements whenever that particular screen is the one owning the
+    // real button window. Calibration data confirmed live that a mirrored
+    // menu extra's actual distance from the right edge can differ by
+    // dozens of points between a Retina and a non-Retina screen (measured:
+    // 566pt vs 622pt on this exact hardware) -- other menu extras simply
+    // don't render at identical widths in points across differently-scaled
+    // mirrored menu bars, so "same order and spacing" doesn't mean "same
+    // distance from the edge". Once a screen has been observed as the
+    // owner at least once, its own recorded offsets give an exact position
+    // from then on instead of inferring one from a different screen.
+    private var measuredOffsetsByScreen: [ObjectIdentifier: (insetFromRight: CGFloat, heightAboveVisibleFrame: CGFloat)] = [:]
     private var timer: Timer?
     private var isActive = false
 
@@ -326,24 +340,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     // land on the other screens' menu bars (confirmed live: floating a
     // single overlay window only fixed the color on the screen that owns
     // the real button window -- the icon on every other screen lost its
-    // dot entirely). Menu extras keep the same order and spacing on every
-    // mirrored menu bar, so the horizontal position replicates cleanly as
-    // the same distance from each screen's own top-right corner.
+    // dot entirely).
     //
-    // The vertical position does NOT replicate the same way: a notched
-    // MacBook display reserves a taller menu bar than a plain external
-    // monitor, so reusing one screen's absolute distance from the TOP EDGE
-    // on another screen with a different menu bar height visibly misplaces
-    // it (confirmed live: correct on the screen owning the real button
-    // window, off-center on the other one). Measuring the owning screen's
-    // height above its own visibleFrame.maxY and replicating that distance
-    // is the best approximation found so far for the other screen(s) --
-    // it's only off by a couple of points on a 23" external monitor paired
-    // with a 14" notched MacBook, which is what these two screens actually
-    // are. NSStatusBar.system.thickness was tried as a screen-independent
-    // alternative and was confirmed live to be considerably worse (it
-    // doesn't reflect the actual current menu bar height on modern macOS),
-    // so this measurement-based approach, imperfect as it is, stays.
+    // Inferring a non-owning screen's position from the CURRENT owner's
+    // measurement (several earlier attempts, both horizontal and vertical)
+    // was never reliable: calibration logging from the actual hardware
+    // showed the icon's real distance from the right edge measured 566pt
+    // on one screen and 622pt on the other -- a 56pt difference. Other menu
+    // extras evidently don't render at identical widths in points across a
+    // Retina and a non-Retina mirrored menu bar, so "same order and
+    // spacing" does not mean "same distance from the edge", and no
+    // formula based on one screen's numbers can predict another's exactly.
+    //
+    // What DOES work: every screen eventually becomes the owner on its own
+    // (whenever the user's focus is on it), at which point its position is
+    // measured exactly. Recording those exact offsets per screen, and
+    // reusing a screen's OWN last-recorded offsets whenever a different
+    // screen currently owns the window, converges to perfect accuracy
+    // everywhere after each screen has been the owner at least once --
+    // rather than a formula that can only ever approximate.
     private func updateDotOverlayPosition() {
         guard isActive,
             let dot = dotView,
@@ -363,30 +378,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         // measure through it instead.
         let dotFrameOnScreen = buttonWindow.convertToScreen(dot.convert(dot.bounds, to: nil))
         let insetFromRight = ownerScreen.frame.maxX - dotFrameOnScreen.midX
-
-        // Temporary calibration logging: the approximation used below for
-        // non-owning screens has gone through several rounds of blind
-        // guesses (each fixing one setup while breaking another) with no
-        // way to verify any of them without live numbers from the actual
-        // hardware. Logging the real geometry here instead, once, so the
-        // next fix can be computed from real numbers rather than another
-        // guess.
-        log("StayActive: [calib] screens=\(NSScreen.screens.count) ownerScreen.frame=\(ownerScreen.frame) ownerScreen.visibleFrame=\(ownerScreen.visibleFrame) ownerScreen.backingScaleFactor=\(ownerScreen.backingScaleFactor) dotFrameOnScreen=\(dotFrameOnScreen) insetFromRight=\(insetFromRight)")
-        for screen in NSScreen.screens {
-            log("StayActive: [calib] screen frame=\(screen.frame) visibleFrame=\(screen.visibleFrame) backingScaleFactor=\(screen.backingScaleFactor) isOwner=\(screen === ownerScreen)")
-        }
-
-        // NSStatusBar.system.thickness was tried here as an authoritative,
-        // screen-independent row height, instead of the owning screen's own
-        // measurement -- but confirmed live, it put the dot far too low on
-        // BOTH the MacBook and the external monitor whenever either one was
-        // the non-owning screen, a much bigger miss than the small one this
-        // was meant to fix. It's evidently not a reliable stand-in for the
-        // actual current menu bar height on modern macOS. Reverted to the
-        // owning screen's own height-above-visibleFrame measurement, which
-        // was only off by a couple of points on the external monitor --
-        // far closer than this.
         let heightAboveVisibleFrame = dotFrameOnScreen.midY - ownerScreen.visibleFrame.maxY
+        measuredOffsetsByScreen[ObjectIdentifier(ownerScreen)] = (insetFromRight, heightAboveVisibleFrame)
 
         let screens = NSScreen.screens
         while dotOverlayWindows.count < screens.count {
@@ -401,17 +394,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             var origin: NSPoint
             if screen === ownerScreen {
                 // The screen that actually owns the real button window --
-                // use its exact measured position rather than the
-                // menu-bar-height approximation below, which is only meant
-                // to stand in for screens we have no real geometry for.
+                // use its exact measured position rather than another
+                // screen's recorded offsets below.
                 origin = NSPoint(
                     x: dotFrameOnScreen.midX - size.width / 2,
                     y: dotFrameOnScreen.midY - size.height / 2
                 )
             } else {
+                // This screen's own offsets if it's been the owner before
+                // (exact), falling back to the current owner's offsets
+                // only for a screen that hasn't been observed as the owner
+                // yet this run (an approximation, same caveats as above).
+                let offsets = measuredOffsetsByScreen[ObjectIdentifier(screen)]
+                    ?? (insetFromRight, heightAboveVisibleFrame)
                 origin = NSPoint(
-                    x: screen.frame.maxX - insetFromRight - size.width / 2,
-                    y: screen.visibleFrame.maxY + heightAboveVisibleFrame - size.height / 2
+                    x: screen.frame.maxX - offsets.insetFromRight - size.width / 2,
+                    y: screen.visibleFrame.maxY + offsets.heightAboveVisibleFrame - size.height / 2
                 )
             }
             // A fractional origin gets snapped to the backing pixel grid by
@@ -426,7 +424,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             origin.x = (origin.x * scale).rounded() / scale
             origin.y = (origin.y * scale).rounded() / scale
 
-            log("StayActive: [calib] placing on screen.frame=\(screen.frame) isOwner=\(screen === ownerScreen) -> origin=\(origin) size=\(size)")
             window.setFrameOrigin(origin)
             window.orderFrontRegardless()
         }

@@ -42,6 +42,7 @@ private final class DotOverlayView: NSView {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
     private var statusItem: NSStatusItem!
+    private var ringView: NSImageView?
     private var dotView: NSImageView?
     private var dotOverlayWindows: [NSWindow] = []
     private var dotOverlayTimer: Timer?
@@ -189,6 +190,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
                 dot.widthAnchor.constraint(equalToConstant: 6),
                 dot.heightAnchor.constraint(equalToConstant: 6),
             ])
+            ringView = ring
             dotView = dot
         }
 
@@ -392,22 +394,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     // rather than a formula that can only ever approximate.
     private func updateDotOverlayPosition() {
         guard isActive,
-            let dot = dotView,
+            let ring = ringView,
             let buttonWindow = statusItem.button?.window,
             let ownerScreen = buttonWindow.screen
         else { return }
 
-        // buttonWindow.frame.mid{X,Y} was tried here as a stand-in for the
-        // dot's true position (to avoid depending on the hidden dotView) --
-        // but the status item's window isn't necessarily centered exactly
-        // on its own icon (there can be a little asymmetric padding around
-        // it), and that mismatch showed up live as the dot sitting slightly
-        // below center on the very screen that owns this window. dotView's
-        // own layout, even while hidden, is the actual ground truth for
-        // where the ring+dot sit (this combination was confirmed correctly
-        // centered before any of the overlay-window work started), so
-        // measure through it instead.
-        let dotFrameOnScreen = buttonWindow.convertToScreen(dot.convert(dot.bounds, to: nil))
+        // buttonWindow.frame.mid{X,Y} was tried here first, then the
+        // (hidden while active) dotView's own layout -- but confirmed
+        // live, clicking Start left the dot shifted down afterward, and it
+        // never self-corrected even though the periodic timer kept
+        // re-measuring every second, meaning the measurement itself was
+        // consistently wrong for as long as the app stayed active, not
+        // just transiently wrong once. dotView is hidden for that entire
+        // duration, and a hidden view's layout isn't guaranteed to keep
+        // updating live -- it can freeze at whatever it was when hiding
+        // happened instead of tracking later changes, which fits exactly.
+        // The ring is NEVER hidden and the dot is defined to sit exactly
+        // centered on it (see the layout constraints above), so measuring
+        // the ring instead gives the same target position without ever
+        // reading a possibly-stale hidden view's geometry.
+        let ringFrameOnScreen = buttonWindow.convertToScreen(ring.convert(ring.bounds, to: nil))
+        let dotFrameOnScreen = NSRect(x: ringFrameOnScreen.midX - 3, y: ringFrameOnScreen.midY - 3, width: 6, height: 6)
         let insetFromRight = ownerScreen.frame.maxX - dotFrameOnScreen.midX
         let heightAboveVisibleFrame = dotFrameOnScreen.midY - ownerScreen.visibleFrame.maxY
         measuredOffsetsByScreen[ObjectIdentifier(ownerScreen)] = (insetFromRight, heightAboveVisibleFrame)

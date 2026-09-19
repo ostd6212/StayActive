@@ -192,10 +192,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(screenParametersChanged),
+            selector: #selector(repositionDotOverlay),
             name: NSApplication.didChangeScreenParametersNotification,
             object: nil
         )
+
+        // Other menu extras constantly reflow on their own (the clock
+        // ticking over, a battery percentage or Wi-Fi signal icon
+        // changing width) and that shifts every icon to their left,
+        // including this one, at essentially random moments completely
+        // unrelated to any click. The ring (a real subview of the button)
+        // moves with its window instantly when that happens; the overlay
+        // window does not, since it's a separate window whose position we
+        // compute ourselves -- and before this, only the once-a-second
+        // timer or an explicit trigger caught up. Confirmed live via a
+        // screen recording: the dot visibly jumped in and out of
+        // alignment with the ring, with no clicking involved, matching
+        // that up-to-1-second lag exactly. Reacting to the button's own
+        // window actually moving closes that lag immediately instead of
+        // waiting for the next poll.
+        if let buttonWindow = statusItem.button?.window {
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(repositionDotOverlay),
+                name: NSWindow.didMoveNotification,
+                object: buttonWindow
+            )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(repositionDotOverlay),
+                name: NSWindow.didResizeNotification,
+                object: buttonWindow
+            )
+        }
 
         let menu = NSMenu()
 
@@ -429,7 +458,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         }
     }
 
-    @objc private func screenParametersChanged() {
+    @objc private func repositionDotOverlay() {
         updateDotOverlayPosition()
     }
 

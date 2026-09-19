@@ -364,6 +364,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         let dotFrameOnScreen = buttonWindow.convertToScreen(dot.convert(dot.bounds, to: nil))
         let insetFromRight = ownerScreen.frame.maxX - dotFrameOnScreen.midX
 
+        // Temporary calibration logging: the approximation used below for
+        // non-owning screens has gone through several rounds of blind
+        // guesses (each fixing one setup while breaking another) with no
+        // way to verify any of them without live numbers from the actual
+        // hardware. Logging the real geometry here instead, once, so the
+        // next fix can be computed from real numbers rather than another
+        // guess.
+        log("StayActive: [calib] screens=\(NSScreen.screens.count) ownerScreen.frame=\(ownerScreen.frame) ownerScreen.visibleFrame=\(ownerScreen.visibleFrame) ownerScreen.backingScaleFactor=\(ownerScreen.backingScaleFactor) dotFrameOnScreen=\(dotFrameOnScreen) insetFromRight=\(insetFromRight)")
+        for screen in NSScreen.screens {
+            log("StayActive: [calib] screen frame=\(screen.frame) visibleFrame=\(screen.visibleFrame) backingScaleFactor=\(screen.backingScaleFactor) isOwner=\(screen === ownerScreen)")
+        }
+
         // NSStatusBar.system.thickness was tried here as an authoritative,
         // screen-independent row height, instead of the owning screen's own
         // measurement -- but confirmed live, it put the dot far too low on
@@ -413,6 +425,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             let scale = screen.backingScaleFactor
             origin.x = (origin.x * scale).rounded() / scale
             origin.y = (origin.y * scale).rounded() / scale
+
+            log("StayActive: [calib] placing on screen.frame=\(screen.frame) isOwner=\(screen === ownerScreen) -> origin=\(origin) size=\(size)")
             window.setFrameOrigin(origin)
             window.orderFrontRegardless()
         }

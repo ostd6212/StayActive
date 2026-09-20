@@ -419,6 +419,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         let heightAboveVisibleFrame = dotFrameOnScreen.midY - ownerScreen.visibleFrame.maxY
         measuredOffsetsByScreen[ObjectIdentifier(ownerScreen)] = (insetFromRight, heightAboveVisibleFrame)
 
+        // Temporary calibration logging (round 2): every previous fix
+        // attempt for the "shifts down after clicking Start" report
+        // assumed the MEASUREMENT was wrong, but none of them changed the
+        // outcome -- so log the measured geometry, the computed origin,
+        // AND the window's actual frame right after setting it, to find
+        // out whether the math itself is wrong or whether the window ends
+        // up somewhere other than where we told it to go.
+        log("StayActive: [calib2] ringFrameOnScreen=\(ringFrameOnScreen) buttonWindow.frame=\(buttonWindow.frame) ownerScreen.frame=\(ownerScreen.frame) ownerScreen.backingScaleFactor=\(ownerScreen.backingScaleFactor)")
+
         let screens = NSScreen.screens
         while dotOverlayWindows.count < screens.count {
             dotOverlayWindows.append(makeDotOverlayWindow())
@@ -464,6 +473,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
             window.setFrameOrigin(origin)
             window.orderFrontRegardless()
+
+            log("StayActive: [calib2] screen.frame=\(screen.frame) isOwner=\(screen === ownerScreen) computedOrigin=\(origin) actualWindowFrame=\(window.frame)")
         }
     }
 

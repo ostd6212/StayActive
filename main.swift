@@ -459,17 +459,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
                     y: screen.visibleFrame.maxY + offsets.heightAboveVisibleFrame - size.height / 2
                 )
             }
-            // A fractional origin gets snapped to the backing pixel grid by
-            // the window server. Rounding to the nearest whole POINT here
-            // was tried first, but a Retina screen's actual pixel grid is
-            // finer than that (0.5pt steps at 2x) -- confirmed live: it
-            // fixed one screen but overshot in the opposite direction on
-            // the other, consistent with rounding to a grid coarser than
-            // the real one. Round to the nearest actual backing pixel for
-            // THIS screen instead, via its own scale factor.
-            let scale = screen.backingScaleFactor
-            origin.x = (origin.x * scale).rounded() / scale
-            origin.y = (origin.y * scale).rounded() / scale
+            // Calibration logging proved this directly: a computed origin
+            // of (970.0, 962.5) resulted in an actual window frame of
+            // (970.0, 962.0, ...) -- the window server truncates an
+            // NSWindow's frame origin to the nearest whole POINT
+            // regardless of the screen's backing scale factor (unlike
+            // content drawn *inside* a window, which can sit at a finer
+            // sub-point/backing-pixel position just fine). Rounding to the
+            // nearest backing pixel (0.5pt steps on a 2x Retina screen) was
+            // silently having its fractional half-point truncated away by
+            // the window server on every single placement, in the same
+            // direction every time -- exactly the stable, non-self-
+            // correcting offset reported after every previous fix in this
+            // area. Round to the nearest whole point instead, matching the
+            // grid the window frame is actually constrained to.
+            origin.x = origin.x.rounded()
+            origin.y = origin.y.rounded()
 
             window.setFrameOrigin(origin)
             window.orderFrontRegardless()

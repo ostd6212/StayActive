@@ -32,10 +32,24 @@ private final class NonVibrantImageView: NSImageView {
 // property or a color choice. A completely separate window is composited
 // by the window server as an ordinary opaque layer on top, outside that
 // per-menu-bar-surface transform entirely.
+// An NSWindow's own frame origin is constrained to whole points --
+// confirmed live via calibration logging: a computed origin of
+// (970.0, 962.5) resulted in an actual window frame of (970.0, 962.0,
+// ...). Content drawn *inside* a window isn't under that same
+// constraint, though, so the leftover sub-point fraction the window's
+// own origin can't represent is absorbed here instead: the view is
+// sized a point larger than the dot in each dimension, and the dot is
+// drawn at dotOrigin (always in [0, 1) in each axis) rather than at a
+// fixed (0, 0) -- the window's rounded whole-point origin plus this
+// fractional draw offset reconstructs the exact intended position.
 private final class DotOverlayView: NSView {
+    var dotOrigin: NSPoint = .zero {
+        didSet { needsDisplay = true }
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         NSColor(srgbRed: 0.20, green: 0.78, blue: 0.35, alpha: 1.0).setFill()
-        NSBezierPath(ovalIn: bounds).fill()
+        NSBezierPath(ovalIn: NSRect(origin: dotOrigin, size: NSSize(width: 6, height: 6))).fill()
     }
 }
 
@@ -325,7 +339,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     // MARK: - Dot overlay windows (active-state green dot)
 
     private func makeDotOverlayWindow() -> NSWindow {
-        let size = NSSize(width: 6, height: 6)
+        // One point larger than the 6x6 dot in each dimension, so
+        // DotOverlayView always has room to draw it at a [0, 1)-range
+        // fractional offset without clipping -- see DotOverlayView.
+        let size = NSSize(width: 7, height: 7)
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: size),
             styleMask: .borderless,
@@ -437,16 +454,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         }
 
         for (window, screen) in zip(dotOverlayWindows, screens) {
-            let size = window.frame.size
-            var origin: NSPoint
+            var idealDotOrigin: NSPoint
             if screen === ownerScreen {
                 // The screen that actually owns the real button window --
                 // use its exact measured position rather than another
                 // screen's recorded offsets below.
-                origin = NSPoint(
-                    x: dotFrameOnScreen.midX - size.width / 2,
-                    y: dotFrameOnScreen.midY - size.height / 2
-                )
+                idealDotOrigin = dotFrameOnScreen.origin
             } else {
                 // This screen's own offsets if it's been the owner before
                 // (exact), falling back to the current owner's offsets
@@ -454,32 +467,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
                 // yet this run (an approximation, same caveats as above).
                 let offsets = measuredOffsetsByScreen[ObjectIdentifier(screen)]
                     ?? (insetFromRight, heightAboveVisibleFrame)
-                origin = NSPoint(
-                    x: screen.frame.maxX - offsets.insetFromRight - size.width / 2,
-                    y: screen.visibleFrame.maxY + offsets.heightAboveVisibleFrame - size.height / 2
+                idealDotOrigin = NSPoint(
+                    x: screen.frame.maxX - offsets.insetFromRight - 3,
+                    y: screen.visibleFrame.maxY + offsets.heightAboveVisibleFrame - 3
                 )
             }
-            // Calibration logging proved this directly: a computed origin
+            // The window's own origin can only land on a whole point
+            // (confirmed live via calibration logging: a computed origin
             // of (970.0, 962.5) resulted in an actual window frame of
-            // (970.0, 962.0, ...) -- the window server truncates an
-            // NSWindow's frame origin to the nearest whole POINT
-            // regardless of the screen's backing scale factor (unlike
-            // content drawn *inside* a window, which can sit at a finer
-            // sub-point/backing-pixel position just fine). Rounding to the
-            // nearest backing pixel (0.5pt steps on a 2x Retina screen) was
-            // silently having its fractional half-point truncated away by
-            // the window server on every single placement, in the same
-            // direction every time -- exactly the stable, non-self-
-            // correcting offset reported after every previous fix in this
-            // area. Round to the nearest whole point instead, matching the
-            // grid the window frame is actually constrained to.
-            origin.x = origin.x.rounded()
-            origin.y = origin.y.rounded()
+            // (970.0, 962.0, ...) -- rounding that away was tried and
+            // still left the dot visibly off-center, since the target
+            // itself genuinely sits at a half-point value here and any
+            // whole-point choice is off by up to 0.5pt from it). Floor the
+            // window to a whole point and hand the leftover fraction to
+            // DotOverlayView to draw with instead of discarding it, so the
+            // reconstructed position (window origin + fractional draw
+            // offset) still lands exactly on the true target.
+            let windowOrigin = NSPoint(x: idealDotOrigin.x.rounded(.down), y: idealDotOrigin.y.rounded(.down))
+            let fraction = NSPoint(x: idealDotOrigin.x - windowOrigin.x, y: idealDotOrigin.y - windowOrigin.y)
 
-            window.setFrameOrigin(origin)
+            window.setFrameOrigin(windowOrigin)
+            (window.contentView as? DotOverlayView)?.dotOrigin = fraction
             window.orderFrontRegardless()
 
-            log("StayActive: [calib2] screen.frame=\(screen.frame) isOwner=\(screen === ownerScreen) computedOrigin=\(origin) actualWindowFrame=\(window.frame)")
+            log("StayActive: [calib2] screen.frame=\(screen.frame) isOwner=\(screen === ownerScreen) idealDotOrigin=\(idealDotOrigin) windowOrigin=\(windowOrigin) fraction=\(fraction) actualWindowFrame=\(window.frame)")
         }
     }
 

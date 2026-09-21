@@ -455,6 +455,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         // untouched.
         let ownerIsOccluded = !buttonWindow.occlusionState.contains(.visible)
 
+        // Temporary calibration logging (round 3): confirmed live that
+        // ownerIsOccluded still doesn't catch the MacBook's own overflow
+        // collapse/expand -- log the raw properties involved so the next
+        // attempt is based on what actually changes (if anything at all
+        // AppKit-visible) rather than another guess.
+        log("StayActive: [calib3] buttonWindow.frame=\(buttonWindow.frame) isVisible=\(buttonWindow.isVisible) occlusionState=\(buttonWindow.occlusionState.rawValue) ownerScreen.frame=\(ownerScreen.frame) ringFrameOnScreen=\(buttonWindow.convertToScreen(ring.convert(ring.bounds, to: nil)))")
+
         // buttonWindow.frame.mid{X,Y} was tried here first, then the
         // (hidden while active) dotView's own layout -- but confirmed
         // live, clicking Start left the dot shifted down afterward, and it

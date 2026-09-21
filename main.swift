@@ -503,10 +503,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             }
             // Every screen (including the owner) reads its own last-
             // recorded offsets here -- for the owner, that's the value
-            // just measured and stored above. No entry yet means this
-            // screen has never been the owner this run, so there's
-            // nothing real to show it at.
-            guard let offsets = measuredOffsetsByScreen[ObjectIdentifier(screen)] else {
+            // just measured and stored above. A screen that's never been
+            // the owner this run has no entry of its own yet -- confirmed
+            // live, right after launch that hid its dot entirely until the
+            // user happened to click on it. Fall back to the owning
+            // screen's own entry in that case (the same cross-screen
+            // approximation used before per-screen caching existed) rather
+            // than showing nothing.
+            guard
+                let offsets = measuredOffsetsByScreen[ObjectIdentifier(screen)]
+                    ?? measuredOffsetsByScreen[ObjectIdentifier(ownerScreen)]
+            else {
                 window.orderOut(nil)
                 continue
             }

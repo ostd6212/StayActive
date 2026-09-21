@@ -1,6 +1,7 @@
 import Cocoa
 import IOKit.pwr_mgt
 import ApplicationServices
+import CoreGraphics
 import os.log
 
 // NSLog messages show up as "<private>" in Console/log stream because the
@@ -376,6 +377,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         return window
     }
 
+    // NSWindow.isVisible and .occlusionState both report a status item's
+    // window as visible/unoccluded even while it's actually hidden behind
+    // the menu bar's overflow chevron or dragged into the customize view
+    // (confirmed live both ways). kCGWindowIsOnscreen, read directly from
+    // the window server via this window's own CGWindowID, is the same
+    // fact the compositor uses to decide what to actually draw -- one
+    // level below anything AppKit's own properties reflect for this case.
+    private func isWindowCurrentlyOnScreen(_ window: NSWindow) -> Bool {
+        let windowID = CGWindowID(window.windowNumber)
+        guard
+            let info = CGWindowListCopyWindowInfo(.optionIncludingWindow, windowID) as? [[String: Any]],
+            let entry = info.first(where: { ($0[kCGWindowNumber as String] as? Int) == window.windowNumber })
+        else { return false }
+        return (entry[kCGWindowIsOnscreen as String] as? Bool) ?? false
+    }
+
     private func showDotOverlay() {
         updateDotOverlayPosition()
 
@@ -436,40 +453,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             let ownerScreen = buttonWindow.screen
         else { return }
 
-        // macOS collapses menu extras behind a "<<"/">>" overflow chevron
-        // when there isn't room for all of them -- confirmed live via a
-        // screen recording: clicking Stop re-collapsed the bar, the ring
-        // vanished behind the chevron, and the overlay dot just kept
-        // floating at its last known position with nothing under it,
-        // "living its own life". buttonWindow.isVisible was tried first,
-        // but confirmed live it stayed true throughout -- the button's
-        // window apparently isn't ordered out when collapsed, just moved
-        // off/behind the visible area, which isVisible doesn't reflect
-        // (it only means the window wants to be shown, not that it's
-        // currently actually on screen). occlusionState.contains(.visible)
-        // reflects whether the window is presently unoccluded and on
-        // screen, which is the actual condition we need here.
+        // macOS can hide a menu extra entirely -- collapsed behind the
+        // "<<"/">>" overflow chevron, or dragged off into the Control
+        // Center-style customize view -- and the overlay must hide with
+        // it rather than floating on with nothing under it. Both
+        // buttonWindow.isVisible and occlusionState.contains(.visible)
+        // were tried and confirmed live to stay true/unoccluded throughout
+        // these cases, including one (a screen recording showed the ring
+        // visibly fade out during the hide) where the window was clearly
+        // not actually on screen. Neither property reflects the real
+        // compositing state for a status item window here, so ask the
+        // window server directly instead: kCGWindowIsOnscreen on this
+        // exact window ID is the same fact the system uses to decide what
+        // to actually draw, one level below anything AppKit exposes.
         //
         // This only tells us about the OWNING screen's window, though --
-        // hiding every screen's overlay whenever just that one is occluded
-        // (an earlier version of this fix) was confirmed live to make the
-        // dot drift on a screen whose own icon was never collapsed at all:
-        // each screen's menu bar overflows independently based on its own
-        // available width, so one screen's occlusion says nothing about
+        // hiding every screen's overlay whenever just that one is hidden
+        // (an earlier version of this fix, using occlusionState) was
+        // confirmed live to make the dot drift on a screen whose own icon
+        // was never hidden at all: each screen's menu bar manages its own
+        // overflow independently, so one screen's state says nothing about
         // another's. Only the owning screen's overlay gets hidden here;
         // every other screen keeps using its own last-recorded offsets
         // untouched.
-        // Calibration logging (round 3) settled this: occlusionState never
-        // actually changes across an overflow collapse/expand on this
-        // hardware (always reported .visible) -- what changes instead is
-        // buttonWindow.frame itself, by hundreds of points (confirmed:
-        // x alternated between 880 and 605 on the same screen). So this
-        // is an ordinary (if unusually large) window move, already
-        // covered by the didMove/didResize handling below and by the
-        // once-a-second timer as a backstop -- not a distinct occlusion
-        // case. The check stays as a real (if narrower than assumed)
-        // safety net for a status item actually being fully hidden.
-        let ownerIsOccluded = !buttonWindow.occlusionState.contains(.visible)
+        let ownerIsOccluded = !isWindowCurrentlyOnScreen(buttonWindow)
 
         // buttonWindow.frame.mid{X,Y} was tried here first, then the
         // (hidden while active) dotView's own layout -- but confirmed

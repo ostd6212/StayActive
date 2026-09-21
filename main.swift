@@ -385,6 +385,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     // fact the compositor uses to decide what to actually draw -- one
     // level below anything AppKit's own properties reflect for this case.
     private func isWindowCurrentlyOnScreen(_ window: NSWindow) -> Bool {
+        // windowNumber is documented to return -1 when the window has no
+        // corresponding window device (not currently on screen at all) --
+        // confirmed live, hitting exactly that case while trying to
+        // convert it to CGWindowID (an unsigned type) crashed the whole
+        // app, since Swift traps converting a negative Int to an unsigned
+        // type rather than clamping or wrapping it. A negative number here
+        // already means "not on screen", so return that directly instead
+        // of ever attempting the conversion.
+        guard window.windowNumber >= 0 else { return false }
         let windowID = CGWindowID(window.windowNumber)
         guard
             let info = CGWindowListCopyWindowInfo(.optionIncludingWindow, windowID) as? [[String: Any]],

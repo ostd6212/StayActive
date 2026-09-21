@@ -453,14 +453,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         // another's. Only the owning screen's overlay gets hidden here;
         // every other screen keeps using its own last-recorded offsets
         // untouched.
+        // Calibration logging (round 3) settled this: occlusionState never
+        // actually changes across an overflow collapse/expand on this
+        // hardware (always reported .visible) -- what changes instead is
+        // buttonWindow.frame itself, by hundreds of points (confirmed:
+        // x alternated between 880 and 605 on the same screen). So this
+        // is an ordinary (if unusually large) window move, already
+        // covered by the didMove/didResize handling below and by the
+        // once-a-second timer as a backstop -- not a distinct occlusion
+        // case. The check stays as a real (if narrower than assumed)
+        // safety net for a status item actually being fully hidden.
         let ownerIsOccluded = !buttonWindow.occlusionState.contains(.visible)
-
-        // Temporary calibration logging (round 3): confirmed live that
-        // ownerIsOccluded still doesn't catch the MacBook's own overflow
-        // collapse/expand -- log the raw properties involved so the next
-        // attempt is based on what actually changes (if anything at all
-        // AppKit-visible) rather than another guess.
-        log("StayActive: [calib3] buttonWindow.frame=\(buttonWindow.frame) isVisible=\(buttonWindow.isVisible) occlusionState=\(buttonWindow.occlusionState.rawValue) ownerScreen.frame=\(ownerScreen.frame) ringFrameOnScreen=\(buttonWindow.convertToScreen(ring.convert(ring.bounds, to: nil)))")
 
         // buttonWindow.frame.mid{X,Y} was tried here first, then the
         // (hidden while active) dotView's own layout -- but confirmed
@@ -503,17 +506,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             }
             // Every screen (including the owner) reads its own last-
             // recorded offsets here -- for the owner, that's the value
-            // just measured and stored above. A screen that's never been
-            // the owner this run has no entry of its own yet -- confirmed
-            // live, right after launch that hid its dot entirely until the
-            // user happened to click on it. Fall back to the owning
-            // screen's own entry in that case (the same cross-screen
-            // approximation used before per-screen caching existed) rather
-            // than showing nothing.
-            guard
-                let offsets = measuredOffsetsByScreen[ObjectIdentifier(screen)]
-                    ?? measuredOffsetsByScreen[ObjectIdentifier(ownerScreen)]
-            else {
+            // just measured and stored above. Falling back to the owning
+            // screen's own entry for a screen that's never been the owner
+            // itself (tried right before this) was confirmed live to be
+            // worse than showing nothing: the MacBook's own icon position
+            // swings by hundreds of points depending on how much its menu
+            // bar is currently collapsed (confirmed via calibration
+            // logging -- buttonWindow.frame.x alternated between 880 and
+            // 605 on the same screen from one moment to the next), so
+            // borrowing its current reading for a screen with a
+            // completely different, unrelated layout produced a visibly
+            // detached dot rather than an approximately-right one. No
+            // entry yet means there's nothing trustworthy to show it at.
+            guard let offsets = measuredOffsetsByScreen[ObjectIdentifier(screen)] else {
                 window.orderOut(nil)
                 continue
             }

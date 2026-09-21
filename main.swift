@@ -443,10 +443,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         // currently actually on screen). occlusionState.contains(.visible)
         // reflects whether the window is presently unoccluded and on
         // screen, which is the actual condition we need here.
-        guard buttonWindow.occlusionState.contains(.visible) else {
-            dotOverlayWindows.forEach { $0.orderOut(nil) }
-            return
-        }
+        //
+        // This only tells us about the OWNING screen's window, though --
+        // hiding every screen's overlay whenever just that one is occluded
+        // (an earlier version of this fix) was confirmed live to make the
+        // dot drift on a screen whose own icon was never collapsed at all:
+        // each screen's menu bar overflows independently based on its own
+        // available width, so one screen's occlusion says nothing about
+        // another's. Only the owning screen's overlay gets hidden here;
+        // every other screen keeps using its own last-recorded offsets
+        // untouched.
+        let ownerIsOccluded = !buttonWindow.occlusionState.contains(.visible)
 
         // buttonWindow.frame.mid{X,Y} was tried here first, then the
         // (hidden while active) dotView's own layout -- but confirmed
@@ -462,20 +469,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         // centered on it (see the layout constraints above), so measuring
         // the ring instead gives the same target position without ever
         // reading a possibly-stale hidden view's geometry.
-        let ringFrameOnScreen = buttonWindow.convertToScreen(ring.convert(ring.bounds, to: nil))
-        let dotFrameOnScreen = NSRect(x: ringFrameOnScreen.midX - 3, y: ringFrameOnScreen.midY - 3, width: 6, height: 6)
-        let insetFromRight = ownerScreen.frame.maxX - dotFrameOnScreen.midX
-        let heightAboveVisibleFrame = dotFrameOnScreen.midY - ownerScreen.visibleFrame.maxY
-        measuredOffsetsByScreen[ObjectIdentifier(ownerScreen)] = (insetFromRight, heightAboveVisibleFrame)
-
-        // Temporary calibration logging (round 2): every previous fix
-        // attempt for the "shifts down after clicking Start" report
-        // assumed the MEASUREMENT was wrong, but none of them changed the
-        // outcome -- so log the measured geometry, the computed origin,
-        // AND the window's actual frame right after setting it, to find
-        // out whether the math itself is wrong or whether the window ends
-        // up somewhere other than where we told it to go.
-        log("StayActive: [calib2] ringFrameOnScreen=\(ringFrameOnScreen) buttonWindow.frame=\(buttonWindow.frame) ownerScreen.frame=\(ownerScreen.frame) ownerScreen.backingScaleFactor=\(ownerScreen.backingScaleFactor)")
+        //
+        // Skipped entirely while occluded: the button's window frame isn't
+        // meaningful while collapsed into the overflow, so measuring it now
+        // would just record garbage over the last known good value.
+        if !ownerIsOccluded {
+            let ringFrameOnScreen = buttonWindow.convertToScreen(ring.convert(ring.bounds, to: nil))
+            let dotFrameOnScreen = NSRect(x: ringFrameOnScreen.midX - 3, y: ringFrameOnScreen.midY - 3, width: 6, height: 6)
+            let insetFromRight = ownerScreen.frame.maxX - dotFrameOnScreen.midX
+            let heightAboveVisibleFrame = dotFrameOnScreen.midY - ownerScreen.visibleFrame.maxY
+            measuredOffsetsByScreen[ObjectIdentifier(ownerScreen)] = (insetFromRight, heightAboveVisibleFrame)
+        }
 
         let screens = NSScreen.screens
         while dotOverlayWindows.count < screens.count {
@@ -486,24 +490,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         }
 
         for (window, screen) in zip(dotOverlayWindows, screens) {
-            var idealDotOrigin: NSPoint
-            if screen === ownerScreen {
-                // The screen that actually owns the real button window --
-                // use its exact measured position rather than another
-                // screen's recorded offsets below.
-                idealDotOrigin = dotFrameOnScreen.origin
-            } else {
-                // This screen's own offsets if it's been the owner before
-                // (exact), falling back to the current owner's offsets
-                // only for a screen that hasn't been observed as the owner
-                // yet this run (an approximation, same caveats as above).
-                let offsets = measuredOffsetsByScreen[ObjectIdentifier(screen)]
-                    ?? (insetFromRight, heightAboveVisibleFrame)
-                idealDotOrigin = NSPoint(
-                    x: screen.frame.maxX - offsets.insetFromRight - 3,
-                    y: screen.visibleFrame.maxY + offsets.heightAboveVisibleFrame - 3
-                )
+            if screen === ownerScreen && ownerIsOccluded {
+                window.orderOut(nil)
+                continue
             }
+            // Every screen (including the owner) reads its own last-
+            // recorded offsets here -- for the owner, that's the value
+            // just measured and stored above. No entry yet means this
+            // screen has never been the owner this run, so there's
+            // nothing real to show it at.
+            guard let offsets = measuredOffsetsByScreen[ObjectIdentifier(screen)] else {
+                window.orderOut(nil)
+                continue
+            }
+            let idealDotOrigin = NSPoint(
+                x: screen.frame.maxX - offsets.insetFromRight - 3,
+                y: screen.visibleFrame.maxY + offsets.heightAboveVisibleFrame - 3
+            )
             // The window's own origin can only land on a whole point
             // (confirmed live via calibration logging: a computed origin
             // of (970.0, 962.5) resulted in an actual window frame of
@@ -521,8 +524,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             window.setFrameOrigin(windowOrigin)
             (window.contentView as? DotOverlayView)?.dotOrigin = fraction
             window.orderFrontRegardless()
-
-            log("StayActive: [calib2] screen.frame=\(screen.frame) isOwner=\(screen === ownerScreen) idealDotOrigin=\(idealDotOrigin) windowOrigin=\(windowOrigin) fraction=\(fraction) actualWindowFrame=\(window.frame)")
         }
     }
 

@@ -379,13 +379,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     private func showDotOverlay() {
         updateDotOverlayPosition()
 
-        // The status item's on-screen position isn't observable directly
-        // (no public notification fires when it moves -- e.g. the user
-        // reordering menu extras, or a monitor being connected/disconnected
-        // shifting layout), so keep it in sync with a cheap periodic
-        // recheck for as long as the overlay is actually showing.
+        // didMove/didResize on the button's own window (registered in
+        // setupStatusItem) catches most repositioning immediately, but
+        // confirmed live, the large jump when the menu bar's own "<<"/">>"
+        // overflow collapses or expands doesn't fire either notification
+        // -- that move is most likely driven directly by SystemUIServer
+        // rather than through the standard AppKit window-moving API this
+        // app's own process would use, so there's nothing here to observe
+        // for it. It still self-corrects once this periodic recheck's
+        // next tick lands, so a short interval keeps that self-correction
+        // fast enough to not read as "stuck" (confirmed live: at 1.0s it
+        // was noticeable; this is cheap enough to run much more often).
         dotOverlayTimer?.invalidate()
-        dotOverlayTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+        dotOverlayTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in
             self?.updateDotOverlayPosition()
         }
     }

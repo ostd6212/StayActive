@@ -431,14 +431,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         else { return }
 
         // macOS collapses menu extras behind a "<<"/">>" overflow chevron
-        // when there isn't room for all of them, hiding the button's own
-        // window entirely rather than moving it -- confirmed live via a
+        // when there isn't room for all of them -- confirmed live via a
         // screen recording: clicking Stop re-collapsed the bar, the ring
         // vanished behind the chevron, and the overlay dot just kept
         // floating at its last known position with nothing under it,
-        // "living its own life". Hide the overlay whenever the real icon
-        // isn't currently on screen, instead of positioning it regardless.
-        guard buttonWindow.isVisible else {
+        // "living its own life". buttonWindow.isVisible was tried first,
+        // but confirmed live it stayed true throughout -- the button's
+        // window apparently isn't ordered out when collapsed, just moved
+        // off/behind the visible area, which isVisible doesn't reflect
+        // (it only means the window wants to be shown, not that it's
+        // currently actually on screen). occlusionState.contains(.visible)
+        // reflects whether the window is presently unoccluded and on
+        // screen, which is the actual condition we need here.
+        guard buttonWindow.occlusionState.contains(.visible) else {
             dotOverlayWindows.forEach { $0.orderOut(nil) }
             return
         }

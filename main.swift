@@ -242,6 +242,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
                 name: NSWindow.didResizeNotification,
                 object: buttonWindow
             )
+            // macOS orders the button's window out entirely (rather than
+            // moving it) when it gets collapsed behind the menu bar's
+            // "<<"/">>" overflow chevron, and orders it back in when
+            // expanded -- neither of which is a move or a resize. React
+            // immediately (not debounced -- there's no rapid-fire burst of
+            // these the way a click's highlight animation produces) so the
+            // overlay disappears/reappears with the real icon instead of
+            // lagging or being left floating with nothing under it.
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(repositionDotOverlay),
+                name: NSWindow.didChangeOcclusionStateNotification,
+                object: buttonWindow
+            )
         }
 
         let menu = NSMenu()
@@ -415,6 +429,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             let buttonWindow = statusItem.button?.window,
             let ownerScreen = buttonWindow.screen
         else { return }
+
+        // macOS collapses menu extras behind a "<<"/">>" overflow chevron
+        // when there isn't room for all of them, hiding the button's own
+        // window entirely rather than moving it -- confirmed live via a
+        // screen recording: clicking Stop re-collapsed the bar, the ring
+        // vanished behind the chevron, and the overlay dot just kept
+        // floating at its last known position with nothing under it,
+        // "living its own life". Hide the overlay whenever the real icon
+        // isn't currently on screen, instead of positioning it regardless.
+        guard buttonWindow.isVisible else {
+            dotOverlayWindows.forEach { $0.orderOut(nil) }
+            return
+        }
 
         // buttonWindow.frame.mid{X,Y} was tried here first, then the
         // (hidden while active) dotView's own layout -- but confirmed

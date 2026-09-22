@@ -14,15 +14,31 @@ P12_PATH="$HOME/stayactive.p12"
 KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
 P12_PASS="temppass123"
 
-if security find-identity -v -p codesigning | grep -q "$CERT_NAME"; then
-    echo "Identity '$CERT_NAME' already present and trusted. Skipping generation."
-    security find-identity -v -p codesigning
-    exit 0
+EXISTING_LINE="$(security find-identity -v -p codesigning | grep "$CERT_NAME" || true)"
+if [ -n "$EXISTING_LINE" ]; then
+    if echo "$EXISTING_LINE" | grep -q "$CERT_NAME\"\$"; then
+        echo "Identity '$CERT_NAME' already present and trusted. Skipping generation."
+        security find-identity -v -p codesigning
+        exit 0
+    fi
+    # Present but flagged invalid (e.g. "(Invalid Key Usage for policy)") --
+    # confirmed live this happens on newer macOS for a cert generated
+    # without an explicit keyUsage extension. Remove it and regenerate
+    # rather than reusing something codesign will refuse anyway.
+    echo "Identity '$CERT_NAME' is present but invalid for code signing:"
+    echo "  $EXISTING_LINE"
+    echo "Removing it and generating a fresh one."
+    security delete-identity -c "$CERT_NAME" "$KEYCHAIN"
 fi
 
 echo "==> Generating self-signed key + certificate"
+# keyUsage=digitalSignature is required alongside extendedKeyUsage=codeSigning --
+# without it, newer macOS rejects the identity for code signing entirely
+# ("Invalid Key Usage for policy" in `security find-identity`) even though
+# it still shows up as present in the keychain.
 openssl req -x509 -newkey rsa:2048 -keyout "$KEY_PATH" \
   -out "$CERT_PATH" -days 3650 -nodes -subj "/CN=$CERT_NAME" \
+  -addext "keyUsage=critical,digitalSignature" \
   -addext "extendedKeyUsage=codeSigning" \
   -addext "basicConstraints=critical,CA:false"
 

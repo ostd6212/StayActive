@@ -28,6 +28,12 @@ else
     echo "         Run: swift generate_icon.swift && iconutil -c icns icon.iconset"
 fi
 
+echo "==> Stripping extended attributes (avoids codesign's 'resource fork,
+#     Finder information, or similar detritus not allowed' error, which
+#     can show up on files that passed through Finder/AirDrop/zip and
+#     carry a resource fork or Finder-info xattr codesign refuses to sign)"
+xattr -cr "$APP"
+
 echo "==> Code signing with identity: $SIGN_IDENTITY"
 codesign --force --deep --sign "$SIGN_IDENTITY" "$APP"
 

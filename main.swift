@@ -73,10 +73,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     // Once true, the owner screen's overlay window's frame is left alone
     // instead of being explicitly re-set every poll -- see the comment at
     // its use site for why. Reset to false whenever the position needs to
-    // be freshly (re-)established: on a fresh addChildWindow attach, or
-    // when repositionDotOverlay's notifications fire (screen parameters
-    // changed, or the occlusion-state notification).
+    // be freshly (re-)established: on a fresh addChildWindow attach, when
+    // repositionDotOverlay's notifications fire (screen parameters changed,
+    // or the occlusion-state notification), or periodically as a safety
+    // net (see ownerOverlaySelfHealCounter) -- a single bad establishment
+    // (confirmed live: catching buttonWindow's frame at a transient
+    // zero-height placeholder right after launch) previously stuck the dot
+    // at a nonsense position for the entire rest of the session, since
+    // nothing else prompted a re-check. Rare enough (every ~2s) not to
+    // reintroduce the per-poll "fighting addChildWindow" problem this
+    // establish-once design exists to avoid.
     private var ownerOverlayPositionEstablished = false
+    private var ownerOverlaySelfHealCounter = 0
 
     // Per-screen offsets (distance from that screen's own right edge, and
     // height above that screen's own visibleFrame.maxY), recorded from real
@@ -418,8 +426,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     // window out entirely for that case, which isVisible does reflect.
     // Checking both together costs nothing and can only narrow the gap,
     // never widen it.
+    //
+    // Confirmed live via diagnostic logging: right at launch (and
+    // presumably at any other moment buttonWindow is newly created/shown),
+    // there's a brief window where isVisible/occlusionState already report
+    // "visible" before the window server has actually assigned it a real
+    // frame -- buttonWindow.frame was still (0, 0, 38, 0), a zero-height
+    // placeholder. Since the owner overlay's position is now established
+    // only once (see ownerOverlayPositionEstablished) instead of every
+    // poll, catching that transient garbage frame as "on screen" locked
+    // the dot onto a nonsense position (computed from that placeholder)
+    // for the entire rest of the session, since nothing prompted a
+    // re-establish afterward. A window with no actual area on screen isn't
+    // meaningfully "on screen" regardless of what those two properties
+    // say, so require a non-empty frame too.
     private func isWindowCurrentlyOnScreen(_ window: NSWindow) -> Bool {
-        window.isVisible && window.occlusionState.contains(.visible)
+        window.isVisible && window.occlusionState.contains(.visible) && !window.frame.isEmpty
     }
 
     private func showDotOverlay() {
@@ -487,6 +509,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             let buttonWindow = statusItem.button?.window,
             let ownerScreen = buttonWindow.screen
         else { return }
+
+        // Safety-net self-heal -- see ownerOverlayPositionEstablished's own
+        // comment for why this exists. At the 0.03s poll interval this
+        // fires roughly every 2s, which is frequent enough to bound how
+        // long a bad establishment could persist undetected, but rare
+        // enough that the brief re-sync it triggers isn't itself a visible
+        // source of jitter.
+        ownerOverlaySelfHealCounter += 1
+        if ownerOverlaySelfHealCounter >= 67 {
+            ownerOverlaySelfHealCounter = 0
+            ownerOverlayPositionEstablished = false
+        }
 
         // macOS can hide a menu extra entirely -- collapsed behind the
         // "<<"/">>" overflow chevron, or dragged off into the Control

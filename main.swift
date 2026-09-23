@@ -1,6 +1,7 @@
 import Cocoa
 import IOKit.pwr_mgt
 import ApplicationServices
+import CoreGraphics
 import os.log
 
 // NSLog messages show up as "<private>" in Console/log stream because the
@@ -159,6 +160,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
         setupStatusItem()
         checkAccessibilityTrust()
+        logScreenCapturePermissionStatus()
         beginBackgroundActivity()
 
         // Always start inactive (gray). If a schedule is enabled, the first
@@ -412,22 +414,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         return window
     }
 
-    // kCGWindowIsOnscreen via CGWindowListCopyWindowInfo was tried here as
-    // a more reliable signal than AppKit's own visibility properties (see
-    // git history) -- but confirmed live, it crashed the app on every
-    // single launch (EXC_BREAKPOINT inside this function), even after
-    // guarding the one known-unsafe conversion in it (a negative
-    // windowNumber). Whatever the exact remaining cause on this specific,
-    // very new macOS version, a crash on every launch is a far worse
-    // outcome than the overflow-detection gap this was meant to close.
-    // Reverted to plain AppKit properties instead, which have never
-    // crashed anything here. occlusionState.contains(.visible) alone
-    // doesn't catch a menu extra collapsed behind the "<<"/">>" overflow
-    // chevron (confirmed live, it stays reported as unoccluded then too)
-    // -- but per setupStatusItem's own comment, macOS orders the button's
-    // window out entirely for that case, which isVisible does reflect.
-    // Checking both together costs nothing and can only narrow the gap,
-    // never widen it.
+    // Plain AppKit properties (isVisible, occlusionState, non-empty frame)
+    // are checked first and used as-is unless the window server's own,
+    // more authoritative answer is available -- see below. These never
+    // crashed anything and stay as the floor/fallback no matter what.
     //
     // Confirmed live via diagnostic logging: right at launch (and
     // presumably at any other moment buttonWindow is newly created/shown),
@@ -442,8 +432,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     // re-establish afterward. A window with no actual area on screen isn't
     // meaningfully "on screen" regardless of what those two properties
     // say, so require a non-empty frame too.
+    //
+    // None of these AppKit properties -- nor NSStatusItem.isVisible nor
+    // button.isHidden, also tried -- ever change while the icon is
+    // collapsed behind the menu bar's "<<"/">>" overflow chevron (confirmed
+    // live, repeatedly). kCGWindowIsOnscreen from CGWindowListCopyWindowInfo
+    // is a genuinely different, lower-level signal from the window server
+    // itself, queried here for THIS APP'S OWN window only (never another
+    // process's window) -- reading a window's own onscreen status this way
+    // does not require Screen Recording permission; that gate is
+    // specifically for reading OTHER processes' window names/content.
+    //
+    // A previous attempt at exactly this crashed the app on every launch
+    // on this exact macOS version (EXC_BREAKPOINT/SIGTRAP), even after
+    // guarding the one identified unsafe conversion (CGWindowID from a
+    // negative windowNumber) -- so this rewrite is deliberately more
+    // defensive than that fix was: every step uses `as?`/`guard let`
+    // instead of a force-cast or force-unwrap, the windowNumber is bounds-
+    // checked in BOTH directions before converting to CGWindowID (UInt32)
+    // instead of just requiring non-negative, and ANY failure at ANY step
+    // (nil array, empty array, missing/wrong-typed key) falls back to the
+    // plain AppKit-only answer rather than assuming either true or false.
+    // If this still crashes, the crash reproduces with or without this
+    // code and something about calling this API at all is unsafe in this
+    // environment -- worth knowing either way, but every precaution that
+    // could be taken without live testing has been taken here.
     private func isWindowCurrentlyOnScreen(_ window: NSWindow) -> Bool {
-        window.isVisible && window.occlusionState.contains(.visible) && !window.frame.isEmpty
+        let appKitVisible = window.isVisible && window.occlusionState.contains(.visible) && !window.frame.isEmpty
+        guard appKitVisible else { return false }
+
+        let windowNumber = window.windowNumber
+        guard windowNumber > 0, windowNumber <= Int(UInt32.max) else { return true }
+
+        guard let infoList = CGWindowListCopyWindowInfo(.optionIncludingWindow, CGWindowID(windowNumber)) as? [[String: AnyObject]]
+        else { return true }
+
+        guard let info = infoList.first else {
+            // The window server doesn't list this window at all right now
+            // -- a stronger signal than anything AppKit exposes, and
+            // exactly what's expected while collapsed behind the chevron.
+            return false
+        }
+
+        guard let onScreen = info[kCGWindowIsOnscreen as String] as? Bool else { return true }
+        return onScreen
     }
 
     private func showDotOverlay() {
@@ -533,13 +565,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         // macOS can hide a menu extra entirely -- collapsed behind the
         // "<<"/">>" overflow chevron, or dragged off into the Control
         // Center-style customize view -- and the overlay ideally hides
-        // with it rather than floating on with nothing under it. A
-        // kCGWindowIsOnscreen-based check via CGWindowListCopyWindowInfo
-        // was tried for this (occlusionState alone doesn't catch either
-        // case, confirmed live), but that crashed the app on every launch
-        // on this specific macOS version -- see isWindowCurrentlyOnScreen
-        // for why it was reverted to plain occlusionState despite the
-        // known gap.
+        // with it rather than floating on with nothing under it. See
+        // isWindowCurrentlyOnScreen for the current (kCGWindowIsOnscreen-
+        // based) detection and its crash history/precautions.
         //
         // This only tells us about the OWNING screen's window, though --
         // hiding every screen's overlay whenever just that one is hidden
@@ -865,6 +893,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         let options: CFDictionary = [promptKey: true] as CFDictionary
         let trusted = AXIsProcessTrustedWithOptions(options)
         log("StayActive: AXIsProcessTrustedWithOptions -> trusted = \(trusted)")
+    }
+
+    // Purely diagnostic, read-only, never prompts (CGPreflightScreenCaptureAccess
+    // just reports current status). isWindowCurrentlyOnScreen queries this
+    // app's OWN window via CGWindowListCopyWindowInfo, which shouldn't need
+    // Screen Recording permission at all (that gate is for reading OTHER
+    // processes' window info) -- but given that API has crashed here twice
+    // before on this exact macOS version for reasons never fully pinned
+    // down, logging this costs nothing and rules the permission in or out
+    // as a factor if it happens again.
+    private func logScreenCapturePermissionStatus() {
+        log("StayActive: CGPreflightScreenCaptureAccess -> \(CGPreflightScreenCaptureAccess())")
     }
 
     // MARK: - App Nap / idle sleep prevention

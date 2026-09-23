@@ -1,7 +1,6 @@
 import Cocoa
 import IOKit.pwr_mgt
 import ApplicationServices
-import CoreGraphics
 import os.log
 
 // NSLog messages show up as "<private>" in Console/log stream because the
@@ -14,94 +13,9 @@ func log(_ message: String) {
     os_log("%{public}@", log: stayActiveLog, type: .info, message)
 }
 
-// Used for the inactive-state dot, which is a template image like the
-// ring, so vibrancy is actually fine for it; kept non-vibrant anyway since
-// that was the first (unsuccessful) attempt at the active-dot color shift
-// and there's no reason to reintroduce vibrancy-dependent behavior here.
-private final class NonVibrantImageView: NSImageView {
-    override var allowsVibrancy: Bool { false }
-}
-
-// Draws the active-state green dot in a small separate borderless NSWindow
-// floated on top of the status item's icon, instead of as content inside
-// the status item's own button. Two prior attempts to keep this dot's
-// color from shifting to blue on a dimmed non-key-screen menu bar --
-// disabling vibrancy on its NSImageView, and drawing it fully opaque in
-// explicit sRGB -- both failed to stop the shift (confirmed live both
-// times), which means whatever transform causes it is applied to the
-// status item's own backing content, not controllable from a subview
-// property or a color choice. A completely separate window is composited
-// by the window server as an ordinary opaque layer on top, outside that
-// per-menu-bar-surface transform entirely.
-// An NSWindow's own frame origin is constrained to whole points --
-// confirmed live via calibration logging: a computed origin of
-// (970.0, 962.5) resulted in an actual window frame of (970.0, 962.0,
-// ...). Content drawn *inside* a window isn't under that same
-// constraint, though, so the leftover sub-point fraction the window's
-// own origin can't represent is absorbed here instead: the view is
-// sized a point larger than the dot in each dimension, and the dot is
-// drawn at dotOrigin (always in [0, 1) in each axis) rather than at a
-// fixed (0, 0) -- the window's rounded whole-point origin plus this
-// fractional draw offset reconstructs the exact intended position.
-private final class DotOverlayView: NSView {
-    var dotOrigin: NSPoint = .zero {
-        didSet { needsDisplay = true }
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        NSColor(srgbRed: 0.20, green: 0.78, blue: 0.35, alpha: 1.0).setFill()
-        NSBezierPath(ovalIn: NSRect(origin: dotOrigin, size: NSSize(width: 6, height: 6))).fill()
-    }
-}
-
 final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
     private var statusItem: NSStatusItem!
-    private var ringView: NSImageView?
-    private var dotView: NSImageView?
-    private var dotOverlayWindows: [NSWindow] = []
-    private var dotOverlayTimer: Timer?
-    private var dotOverlayDebounceTimer: Timer?
-
-    // Edge-triggered state for the temporary [dbg] logging in
-    // updateDotOverlayPosition -- logging every poll was fine at 0.3s, but
-    // would flood the log at the much faster 0.03s interval needed to
-    // track a live drag closely. Logging only on an actual change gives
-    // the same diagnostic picture (every real transition, in order) at any
-    // poll rate.
-    private var lastLoggedButtonFrame: NSRect?
-    private var lastLoggedStatusItemIsVisible: Bool?
-    private var lastLoggedButtonIsHidden: Bool?
-
-    // Once true, the owner screen's overlay window's frame is left alone
-    // instead of being explicitly re-set every poll -- see the comment at
-    // its use site for why. Reset to false whenever the position needs to
-    // be freshly (re-)established: on a fresh addChildWindow attach, when
-    // repositionDotOverlay's notifications fire (screen parameters changed,
-    // or the occlusion-state notification), or periodically as a safety
-    // net (see ownerOverlaySelfHealCounter) -- a single bad establishment
-    // (confirmed live: catching buttonWindow's frame at a transient
-    // zero-height placeholder right after launch) previously stuck the dot
-    // at a nonsense position for the entire rest of the session, since
-    // nothing else prompted a re-check. Rare enough (every ~2s) not to
-    // reintroduce the per-poll "fighting addChildWindow" problem this
-    // establish-once design exists to avoid.
-    private var ownerOverlayPositionEstablished = false
-    private var ownerOverlaySelfHealCounter = 0
-
-    // Per-screen offsets (distance from that screen's own right edge, and
-    // height above that screen's own visibleFrame.maxY), recorded from real
-    // measurements whenever that particular screen is the one owning the
-    // real button window. Calibration data confirmed live that a mirrored
-    // menu extra's actual distance from the right edge can differ by
-    // dozens of points between a Retina and a non-Retina screen (measured:
-    // 566pt vs 622pt on this exact hardware) -- other menu extras simply
-    // don't render at identical widths in points across differently-scaled
-    // mirrored menu bars, so "same order and spacing" doesn't mean "same
-    // distance from the edge". Once a screen has been observed as the
-    // owner at least once, its own recorded offsets give an exact position
-    // from then on instead of inferring one from a different screen.
-    private var measuredOffsetsByScreen: [ObjectIdentifier: (insetFromRight: CGFloat, heightAboveVisibleFrame: CGFloat)] = [:]
     private var timer: Timer?
     private var isActive = false
 
@@ -160,7 +74,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
         setupStatusItem()
         checkAccessibilityTrust()
-        logScreenCapturePermissionStatus()
         beginBackgroundActivity()
 
         // Always start inactive (gray). If a schedule is enabled, the first
@@ -176,8 +89,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         log("StayActive: applicationWillTerminate - cleaning up")
         timer?.invalidate()
         scheduleCheckTimer?.invalidate()
-        dotOverlayTimer?.invalidate()
-        dotOverlayDebounceTimer?.invalidate()
         endBackgroundActivity()
         releaseDisplaySleepAssertion()
     }
@@ -193,98 +104,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
 
-        // The ring and the (inactive-only) dot are separate overlay
-        // subviews rather than one drawn into the button's own .image, and
-        // the dot is centered on the RING's own anchors, not the button's
-        // -- centering each independently on the button left them slightly
-        // off from one another in practice (likely NSStatusBarButton's own
-        // image layout doesn't put its image at exactly the same point as
-        // the button's geometric bounds center). Anchoring the dot to the
-        // ring directly makes them share the exact same reference point, so
-        // they can't drift apart regardless of any such button-level quirk.
-        // The active-state green dot is a separate floating window (see
-        // DotOverlayView) positioned over this same spot instead of a third
-        // state for this image, so it isn't subject to whatever transform
-        // the status item's own backing content goes through.
-        if let button = statusItem.button {
-            let ring = NSImageView()
-            ring.translatesAutoresizingMaskIntoConstraints = false
-            ring.image = makeRingImage()
-            button.addSubview(ring)
-
-            // Always the inactive (template, black) dot now -- the active
-            // green state is drawn by a separate floating window (see
-            // DotOverlayView) instead of by swapping this view's image, so
-            // this view only needs hiding/showing, never redrawing.
-            let dot = NonVibrantImageView()
-            dot.translatesAutoresizingMaskIntoConstraints = false
-            dot.image = makeInactiveDotImage()
-            button.addSubview(dot)
-
-            NSLayoutConstraint.activate([
-                ring.centerXAnchor.constraint(equalTo: button.centerXAnchor),
-                ring.centerYAnchor.constraint(equalTo: button.centerYAnchor),
-                ring.widthAnchor.constraint(equalToConstant: 18),
-                ring.heightAnchor.constraint(equalToConstant: 18),
-
-                dot.centerXAnchor.constraint(equalTo: ring.centerXAnchor),
-                dot.centerYAnchor.constraint(equalTo: ring.centerYAnchor),
-                dot.widthAnchor.constraint(equalToConstant: 6),
-                dot.heightAnchor.constraint(equalToConstant: 6),
-            ])
-            ringView = ring
-            dotView = dot
-        }
-
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(repositionDotOverlay),
-            name: NSApplication.didChangeScreenParametersNotification,
-            object: nil
-        )
-
-        // Other menu extras constantly reflow on their own (the clock
-        // ticking over, a battery percentage or Wi-Fi signal icon
-        // changing width) and that shifts every icon to their left,
-        // including this one, at essentially random moments completely
-        // unrelated to any click. The ring (a real subview of the button)
-        // moves with its window instantly when that happens; the overlay
-        // window does not, since it's a separate window whose position we
-        // compute ourselves -- and before this, only the once-a-second
-        // timer or an explicit trigger caught up. Confirmed live via a
-        // screen recording: the dot visibly jumped in and out of
-        // alignment with the ring, with no clicking involved, matching
-        // that up-to-1-second lag exactly. Reacting to the button's own
-        // window actually moving closes that lag immediately instead of
-        // waiting for the next poll.
-        if let buttonWindow = statusItem.button?.window {
-            NotificationCenter.default.addObserver(
-                self,
-                selector: #selector(buttonWindowGeometryChanged),
-                name: NSWindow.didMoveNotification,
-                object: buttonWindow
-            )
-            NotificationCenter.default.addObserver(
-                self,
-                selector: #selector(buttonWindowGeometryChanged),
-                name: NSWindow.didResizeNotification,
-                object: buttonWindow
-            )
-            // macOS orders the button's window out entirely (rather than
-            // moving it) when it gets collapsed behind the menu bar's
-            // "<<"/">>" overflow chevron, and orders it back in when
-            // expanded -- neither of which is a move or a resize. React
-            // immediately (not debounced -- there's no rapid-fire burst of
-            // these the way a click's highlight animation produces) so the
-            // overlay disappears/reappears with the real icon instead of
-            // lagging or being left floating with nothing under it.
-            NotificationCenter.default.addObserver(
-                self,
-                selector: #selector(repositionDotOverlay),
-                name: NSWindow.didChangeOcclusionStateNotification,
-                object: buttonWindow
-            )
-        }
+        // A single image assigned directly to the button, rather than the
+        // ring+dot split into separate overlay subviews (and, at one
+        // point, an entirely separate floating NSWindow for the
+        // active-state color) used before this. That earlier architecture
+        // existed only to solve problems it also caused: a floating
+        // window drawn as a wholly separate surface can only ever
+        // approximate the real button's position (never reacts instantly
+        // to every possible way SystemUIServer can move or hide it -- drag-
+        // reordering, the "<<"/">>" overflow chevron) since there is no
+        // reliable, crash-safe signal for exactly when to hide it (multiple
+        // attempts, including a lower-level CoreGraphics query, confirmed
+        // live to either not detect it or crash the app outright). A
+        // single image is literally part of the same button/window the
+        // real icon's own hide/show/position already works correctly for,
+        // so none of that is a separate problem to solve anymore.
+        statusItem.button?.image = makeIconImage(active: false)
 
         let menu = NSMenu()
 
@@ -360,22 +195,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         isActive = newValue
         log("StayActive: setActive(\(newValue)) reason=\(reason)")
 
-        dotView?.isHidden = isActive
-        // Confirmed live: the gray template dot still showed on a
-        // non-owning screen's mirrored copy of the icon after being hidden
-        // here, while correctly hidden on the screen that owns the real
-        // window -- setting isHidden alone doesn't reliably reach whatever
-        // mechanism mirrors this button's content onto other screens.
-        // Explicitly marking both the dot and its superview dirty pushes a
-        // real redraw that mirroring can pick up, instead of relying on
-        // isHidden's own (evidently sometimes-skipped) invalidation.
-        dotView?.needsDisplay = true
-        dotView?.superview?.needsDisplay = true
-        if isActive {
-            showDotOverlay()
-        } else {
-            hideDotOverlay()
-        }
+        statusItem.button?.image = makeIconImage(active: isActive)
         statusItem.menu?.item(at: 0)?.title = toggleTitle()
 
         if isActive {
@@ -388,429 +208,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         }
     }
 
-    // MARK: - Dot overlay windows (active-state green dot)
-
-    private func makeDotOverlayWindow() -> NSWindow {
-        // One point larger than the 6x6 dot in each dimension, so
-        // DotOverlayView always has room to draw it at a [0, 1)-range
-        // fractional offset without clipping -- see DotOverlayView.
-        let size = NSSize(width: 7, height: 7)
-        let window = NSWindow(
-            contentRect: NSRect(origin: .zero, size: size),
-            styleMask: .borderless,
-            backing: .buffered,
-            defer: false
-        )
-        window.isOpaque = false
-        window.backgroundColor = .clear
-        window.hasShadow = false
-        window.ignoresMouseEvents = true
-        window.level = .statusBar
-        // Menu extras stay visible across every space and full-screen app on
-        // their screen; this overlay needs the same behavior so it doesn't
-        // vanish or lag behind during a space switch.
-        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
-        window.contentView = DotOverlayView(frame: NSRect(origin: .zero, size: size))
-        return window
-    }
-
-    // Plain AppKit properties (isVisible, occlusionState, non-empty frame)
-    // are checked first and used as-is unless the window server's own,
-    // more authoritative answer is available -- see below. These never
-    // crashed anything and stay as the floor/fallback no matter what.
-    //
-    // Confirmed live via diagnostic logging: right at launch (and
-    // presumably at any other moment buttonWindow is newly created/shown),
-    // there's a brief window where isVisible/occlusionState already report
-    // "visible" before the window server has actually assigned it a real
-    // frame -- buttonWindow.frame was still (0, 0, 38, 0), a zero-height
-    // placeholder. Since the owner overlay's position is now established
-    // only once (see ownerOverlayPositionEstablished) instead of every
-    // poll, catching that transient garbage frame as "on screen" locked
-    // the dot onto a nonsense position (computed from that placeholder)
-    // for the entire rest of the session, since nothing prompted a
-    // re-establish afterward. A window with no actual area on screen isn't
-    // meaningfully "on screen" regardless of what those two properties
-    // say, so require a non-empty frame too.
-    //
-    // None of these AppKit properties -- nor NSStatusItem.isVisible nor
-    // button.isHidden, also tried -- ever change while the icon is
-    // collapsed behind the menu bar's "<<"/">>" overflow chevron (confirmed
-    // live, repeatedly). kCGWindowIsOnscreen from CGWindowListCopyWindowInfo
-    // is a genuinely different, lower-level signal from the window server
-    // itself, queried here for THIS APP'S OWN window only (never another
-    // process's window) -- reading a window's own onscreen status this way
-    // does not require Screen Recording permission; that gate is
-    // specifically for reading OTHER processes' window names/content.
-    //
-    // A previous attempt at exactly this crashed the app on every launch
-    // on this exact macOS version (EXC_BREAKPOINT/SIGTRAP), even after
-    // guarding the one identified unsafe conversion (CGWindowID from a
-    // negative windowNumber) -- so this rewrite is deliberately more
-    // defensive than that fix was: every step uses `as?`/`guard let`
-    // instead of a force-cast or force-unwrap, the windowNumber is bounds-
-    // checked in BOTH directions before converting to CGWindowID (UInt32)
-    // instead of just requiring non-negative, and ANY failure at ANY step
-    // (nil array, empty array, missing/wrong-typed key) falls back to the
-    // plain AppKit-only answer rather than assuming either true or false.
-    // If this still crashes, the crash reproduces with or without this
-    // code and something about calling this API at all is unsafe in this
-    // environment -- worth knowing either way, but every precaution that
-    // could be taken without live testing has been taken here.
-    private func isWindowCurrentlyOnScreen(_ window: NSWindow) -> Bool {
-        let appKitVisible = window.isVisible && window.occlusionState.contains(.visible) && !window.frame.isEmpty
-        guard appKitVisible else { return false }
-
-        let windowNumber = window.windowNumber
-        guard windowNumber > 0, windowNumber <= Int(UInt32.max) else { return true }
-
-        guard let infoList = CGWindowListCopyWindowInfo(.optionIncludingWindow, CGWindowID(windowNumber)) as? [[String: AnyObject]]
-        else { return true }
-
-        guard let info = infoList.first else {
-            // The window server doesn't list this window at all right now
-            // -- a stronger signal than anything AppKit exposes, and
-            // exactly what's expected while collapsed behind the chevron.
-            return false
-        }
-
-        guard let onScreen = info[kCGWindowIsOnscreen as String] as? Bool else { return true }
-        return onScreen
-    }
-
-    private func showDotOverlay() {
-        updateDotOverlayPosition()
-
-        // didMove/didResize on the button's own window (registered in
-        // setupStatusItem) catches most repositioning immediately, but
-        // confirmed live via diagnostic logging during an actual drag of
-        // the icon: buttonWindow.frame changed through many distinct
-        // intermediate values (e.g. 610 -> 849 -> 887 -> 900 -> 907 -> ...)
-        // with a new value appearing every ~0.3s -- exactly this timer's
-        // old interval -- and with NOT ONE didMove/didResize notification
-        // logged in between. So during a live drag, nothing here ever
-        // fires at all; this periodic poll was the ONLY thing catching the
-        // movement, once every 0.3s, which is exactly the visible
-        // "lives its own life, chases the ring" lag reported. Dropping the
-        // interval to 0.03s (still cheap -- this is just a rect
-        // computation and one setFrameOrigin call) makes that catch-up gap
-        // small enough to read as instantaneous instead.
-        dotOverlayTimer?.invalidate()
-        dotOverlayTimer = Timer.scheduledTimer(withTimeInterval: 0.03, repeats: true) { [weak self] _ in
-            self?.updateDotOverlayPosition()
-        }
-    }
-
-    private func hideDotOverlay() {
-        dotOverlayTimer?.invalidate()
-        dotOverlayTimer = nil
-        dotOverlayWindows.forEach {
-            $0.parent?.removeChildWindow($0)
-            $0.orderOut(nil)
-        }
-    }
-
-    // In macOS's "Displays have separate Spaces" setup (the default), a
-    // menu extra is mirrored onto every screen's own menu bar, but AppKit
-    // only ever hands this process one real NSWindow for it
-    // (statusItem.button.window) -- tied to whichever single screen
-    // currently owns it. There's no API for where the *mirrored* copies
-    // land on the other screens' menu bars (confirmed live: floating a
-    // single overlay window only fixed the color on the screen that owns
-    // the real button window -- the icon on every other screen lost its
-    // dot entirely).
-    //
-    // Inferring a non-owning screen's position from the CURRENT owner's
-    // measurement (several earlier attempts, both horizontal and vertical)
-    // was never reliable: calibration logging from the actual hardware
-    // showed the icon's real distance from the right edge measured 566pt
-    // on one screen and 622pt on the other -- a 56pt difference. Other menu
-    // extras evidently don't render at identical widths in points across a
-    // Retina and a non-Retina mirrored menu bar, so "same order and
-    // spacing" does not mean "same distance from the edge", and no
-    // formula based on one screen's numbers can predict another's exactly.
-    //
-    // What DOES work: every screen eventually becomes the owner on its own
-    // (whenever the user's focus is on it), at which point its position is
-    // measured exactly. Recording those exact offsets per screen, and
-    // reusing a screen's OWN last-recorded offsets whenever a different
-    // screen currently owns the window, converges to perfect accuracy
-    // everywhere after each screen has been the owner at least once --
-    // rather than a formula that can only ever approximate.
-    private func updateDotOverlayPosition() {
-        guard isActive,
-            let ring = ringView,
-            let buttonWindow = statusItem.button?.window,
-            let ownerScreen = buttonWindow.screen
-        else { return }
-
-        // Safety-net self-heal -- see ownerOverlayPositionEstablished's own
-        // comment for why this exists. At the 0.03s poll interval this
-        // fires roughly every 10s, which is frequent enough to bound how
-        // long a bad establishment could persist undetected, but rare
-        // enough that the brief re-sync it triggers isn't itself a visible
-        // source of jitter. Also the thing that periodically calls
-        // orderFrontRegardless() again (see the owner-screen branch below)
-        // -- kept fairly infrequent so that while the icon is genuinely
-        // collapsed behind the overflow chevron, this doesn't fight
-        // SystemUIServer's own covering layer back into place too often
-        // (some flicker every ~10s is an acceptable trade-off against
-        // going back to fighting it every single poll).
-        ownerOverlaySelfHealCounter += 1
-        if ownerOverlaySelfHealCounter >= 333 {
-            ownerOverlaySelfHealCounter = 0
-            ownerOverlayPositionEstablished = false
-        }
-
-        // macOS can hide a menu extra entirely -- collapsed behind the
-        // "<<"/">>" overflow chevron, or dragged off into the Control
-        // Center-style customize view -- and the overlay ideally hides
-        // with it rather than floating on with nothing under it. See
-        // isWindowCurrentlyOnScreen for the current (kCGWindowIsOnscreen-
-        // based) detection and its crash history/precautions.
-        //
-        // This only tells us about the OWNING screen's window, though --
-        // hiding every screen's overlay whenever just that one is hidden
-        // (an earlier version of this fix, using occlusionState) was
-        // confirmed live to make the dot drift on a screen whose own icon
-        // was never hidden at all: each screen's menu bar manages its own
-        // overflow independently, so one screen's state says nothing about
-        // another's. Only the owning screen's overlay gets hidden here;
-        // every other screen keeps using its own last-recorded offsets
-        // untouched.
-        let ownerIsOccluded = !isWindowCurrentlyOnScreen(buttonWindow)
-
-        // Temporary diagnostic logging, edge-triggered (see
-        // lastLoggedButtonFrame) so it stays readable even at this
-        // function's fast poll rate. This is what previously showed the
-        // drag-desync root cause (see showDotOverlay's comment) -- kept
-        // around since the overflow-collapse bug is still unexplained:
-        // buttonWindow.frame/isVisible/occlusionState have never once
-        // changed for that case in any capture so far. Two more cheap,
-        // zero-risk (plain BOOL properties, no CoreGraphics) signals added
-        // here that haven't been tried yet: NSStatusItem.isVisible and the
-        // button's own isHidden -- logged on ANY change (not just a frame
-        // change, since frame is exactly what does NOT change during a
-        // collapse) in case either of these actually does reflect it.
-        let statusItemIsVisible = statusItem.isVisible
-        let buttonIsHidden = statusItem.button?.isHidden ?? true
-        if buttonWindow.frame != lastLoggedButtonFrame
-            || statusItemIsVisible != lastLoggedStatusItemIsVisible
-            || buttonIsHidden != lastLoggedButtonIsHidden {
-            lastLoggedButtonFrame = buttonWindow.frame
-            lastLoggedStatusItemIsVisible = statusItemIsVisible
-            lastLoggedButtonIsHidden = buttonIsHidden
-            log("StayActive: [dbg] buttonWindow.frame=\(buttonWindow.frame) isVisible=\(buttonWindow.isVisible) occlusionState=\(buttonWindow.occlusionState.rawValue) ownerIsOccluded=\(ownerIsOccluded) statusItemIsVisible=\(statusItemIsVisible) buttonIsHidden=\(buttonIsHidden) screen=\(ownerScreen.localizedName)")
-        }
-
-        // buttonWindow.frame.mid{X,Y} was tried here first, then the
-        // (hidden while active) dotView's own layout -- but confirmed
-        // live, clicking Start left the dot shifted down afterward, and it
-        // never self-corrected even though the periodic timer kept
-        // re-measuring every second, meaning the measurement itself was
-        // consistently wrong for as long as the app stayed active, not
-        // just transiently wrong once. dotView is hidden for that entire
-        // duration, and a hidden view's layout isn't guaranteed to keep
-        // updating live -- it can freeze at whatever it was when hiding
-        // happened instead of tracking later changes, which fits exactly.
-        // The ring is NEVER hidden and the dot is defined to sit exactly
-        // centered on it (see the layout constraints above), so measuring
-        // the ring instead gives the same target position without ever
-        // reading a possibly-stale hidden view's geometry.
-        //
-        // Skipped entirely while occluded: the button's window frame isn't
-        // meaningful while collapsed into the overflow, so measuring it now
-        // would just record garbage over the last known good value.
-        if !ownerIsOccluded {
-            let ringFrameOnScreen = buttonWindow.convertToScreen(ring.convert(ring.bounds, to: nil))
-            let dotFrameOnScreen = NSRect(x: ringFrameOnScreen.midX - 3, y: ringFrameOnScreen.midY - 3, width: 6, height: 6)
-            let insetFromRight = ownerScreen.frame.maxX - dotFrameOnScreen.midX
-            let heightAboveVisibleFrame = dotFrameOnScreen.midY - ownerScreen.visibleFrame.maxY
-            measuredOffsetsByScreen[ObjectIdentifier(ownerScreen)] = (insetFromRight, heightAboveVisibleFrame)
-        }
-
-        let screens = NSScreen.screens
-        while dotOverlayWindows.count < screens.count {
-            dotOverlayWindows.append(makeDotOverlayWindow())
-        }
-        while dotOverlayWindows.count > screens.count {
-            let removed = dotOverlayWindows.removeLast()
-            removed.parent?.removeChildWindow(removed)
-            removed.orderOut(nil)
-        }
-
-        for (window, screen) in zip(dotOverlayWindows, screens) {
-            if screen === ownerScreen && ownerIsOccluded {
-                if window.parent != nil {
-                    window.parent?.removeChildWindow(window)
-                }
-                window.orderOut(nil)
-                continue
-            }
-
-            // The owner screen's overlay is made a real AppKit child
-            // window of the button's own window. Both the drag-desync bug
-            // and the overflow-collapse bug trace back to the button's
-            // window being moved/ordered out by SystemUIServer directly,
-            // without firing didMove/didResize/didChangeOcclusion (confirmed
-            // live). A child window's position is tracked by the window
-            // server itself as an intrinsic property of the parent/child
-            // relationship -- not via notifications this process has to
-            // observe -- so it should move in lockstep with the real
-            // window regardless of what caused the parent to move.
-            //
-            // This used to ALSO explicitly re-set the child's frame every
-            // poll, on top of the addChildWindow relationship, meant as a
-            // "self-healing backstop". Confirmed live that was actually
-            // fighting the relationship instead of backstopping it:
-            // dropping the poll interval to 0.03s (from 0.3s) made the
-            // logged position land within 1-25ms of every real move, yet
-            // the dot still visibly lived its own life during a drag.
-            // That rules out timing/frequency as the remaining cause --
-            // the issue is relying on an independently-timed Timer tick to
-            // redraw a SEPARATE window at all, rather than the window
-            // server's own atomic parent/child move: two windows updated
-            // by two different mechanisms don't land in the same
-            // compositor frame even when the math is correct to the
-            // millisecond, and a human eye is very sensitive to exactly
-            // that kind of one-frame mismatch between two things that are
-            // supposed to be rigidly locked together. So now the frame is
-            // set explicitly only ONCE right after attaching (establishing
-            // the relative offset addChildWindow then maintains on its
-            // own), not on every subsequent poll -- see
-            // ownerOverlayPositionEstablished below.
-            if screen === ownerScreen {
-                if window.parent !== buttonWindow {
-                    window.parent?.removeChildWindow(window)
-                    buttonWindow.addChildWindow(window, ordered: .above)
-                    // Not documented either way, but cheap to reassert:
-                    // some AppKit versions are known to normalize a child
-                    // window's level toward its parent's on attach, which
-                    // would be harmless here anyway (buttonWindow's own
-                    // level should already be at least this high) but
-                    // there's no reason to depend on that being true.
-                    window.level = .statusBar
-                    ownerOverlayPositionEstablished = false
-                }
-                if ownerOverlayPositionEstablished {
-                    // Already attached and correctly positioned -- trust
-                    // addChildWindow to keep it glued to buttonWindow's
-                    // real position for any subsequent move, instead of
-                    // re-deriving and re-setting our own independent guess
-                    // at that same position every 0.03s (see the long
-                    // comment above for why that was the actual problem).
-                    //
-                    // Deliberately NOT calling orderFrontRegardless() here
-                    // anymore. Diagnostic logging from an actual
-                    // collapse-behind-the-chevron repro showed
-                    // buttonWindow.frame, isVisible and occlusionState all
-                    // stay completely unchanged throughout -- the real
-                    // ring is visually covered by something SystemUIServer
-                    // draws on top of it, without touching this app's
-                    // window at all. Our dot staying visible on top of
-                    // that same covering layer (confirmed live via
-                    // screenshot: the dot floating right next to the
-                    // chevron with no ring under it) is consistent with
-                    // forcing it frontmost on every single poll -- far
-                    // more often than the covering layer would ever need
-                    // to reassert itself -- so ours could never end up
-                    // BELOW it. Only reordering front when the position is
-                    // freshly (re-)established (rare -- see the self-heal
-                    // above) gives the system's own covering layer room to
-                    // end up above ours the same way it ends up above the
-                    // real ring, instead of this app fighting that too.
-                    continue
-                }
-            } else if window.parent != nil {
-                // A screen that was previously the owner (and got its
-                // overlay attached above) can stop being the owner if
-                // ownership migrates elsewhere -- detach it so it goes
-                // back to being positioned purely from its own cached
-                // offsets instead of still tracking the button window it
-                // no longer corresponds to.
-                window.parent?.removeChildWindow(window)
-            }
-
-            // Every screen (including the owner) reads its own last-
-            // recorded offsets here -- for the owner, that's the value
-            // just measured and stored above. Falling back to the owning
-            // screen's own entry for a screen that's never been the owner
-            // itself (tried right before this) was confirmed live to be
-            // worse than showing nothing: the MacBook's own icon position
-            // swings by hundreds of points depending on how much its menu
-            // bar is currently collapsed (confirmed via calibration
-            // logging -- buttonWindow.frame.x alternated between 880 and
-            // 605 on the same screen from one moment to the next), so
-            // borrowing its current reading for a screen with a
-            // completely different, unrelated layout produced a visibly
-            // detached dot rather than an approximately-right one. No
-            // entry yet means there's nothing trustworthy to show it at.
-            guard let offsets = measuredOffsetsByScreen[ObjectIdentifier(screen)] else {
-                window.orderOut(nil)
-                continue
-            }
-            let idealDotOrigin = NSPoint(
-                x: screen.frame.maxX - offsets.insetFromRight - 3,
-                y: screen.visibleFrame.maxY + offsets.heightAboveVisibleFrame - 3
-            )
-            // The window's own origin can only land on a whole point
-            // (confirmed live via calibration logging: a computed origin
-            // of (970.0, 962.5) resulted in an actual window frame of
-            // (970.0, 962.0, ...) -- rounding that away was tried and
-            // still left the dot visibly off-center, since the target
-            // itself genuinely sits at a half-point value here and any
-            // whole-point choice is off by up to 0.5pt from it). Floor the
-            // window to a whole point and hand the leftover fraction to
-            // DotOverlayView to draw with instead of discarding it, so the
-            // reconstructed position (window origin + fractional draw
-            // offset) still lands exactly on the true target.
-            let windowOrigin = NSPoint(x: idealDotOrigin.x.rounded(.down), y: idealDotOrigin.y.rounded(.down))
-            let fraction = NSPoint(x: idealDotOrigin.x - windowOrigin.x, y: idealDotOrigin.y - windowOrigin.y)
-
-            window.setFrameOrigin(windowOrigin)
-            (window.contentView as? DotOverlayView)?.dotOrigin = fraction
-            window.orderFrontRegardless()
-
-            if screen === ownerScreen {
-                ownerOverlayPositionEstablished = true
-                // Temporary diagnostic logging alongside the one in the
-                // guard above -- see that comment. Now only fires when the
-                // owner overlay's position is freshly (re-)established
-                // (attach, or a forced re-sync from repositionDotOverlay),
-                // not every poll -- confirms whether the attach took
-                // (parent identity) and what position it was pinned to.
-                log("StayActive: [dbg] owner overlay position (re-)established, attachedToButton=\(window.parent === buttonWindow) windowOrigin=\(windowOrigin) insetFromRight=\(offsets.insetFromRight) heightAboveVisibleFrame=\(offsets.heightAboveVisibleFrame)")
-            }
-        }
-    }
-
-    @objc private func repositionDotOverlay() {
-        log("StayActive: [dbg] repositionDotOverlay fired (screen-params or occlusion-state notification)")
-        // Screen parameters (resolution, arrangement, Dock/menu bar size)
-        // or occlusion state changing are exactly the cases that really do
-        // need the owner overlay's position freshly re-derived, unlike a
-        // routine poll tick -- force that instead of trusting whatever
-        // addChildWindow already has.
-        ownerOverlayPositionEstablished = false
-        updateDotOverlayPosition()
-    }
-
-    // The button's window goes through several rapid intermediate frame
-    // changes of its own during a click's highlight/press-and-release
-    // animation (confirmed live: clicking Start visibly left the dot
-    // shifted down afterward on one screen -- reacting to every one of
-    // those intermediate frames could latch onto a not-yet-settled one
-    // instead of the final, correct position). Debounce briefly so a burst
-    // of move/resize notifications from one interaction only measures once
-    // things have settled.
-    @objc private func buttonWindowGeometryChanged() {
-        log("StayActive: [dbg] buttonWindowGeometryChanged fired (didMove/didResize notification)")
-        dotOverlayDebounceTimer?.invalidate()
-        dotOverlayDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: false) { [weak self] _ in
-            self?.updateDotOverlayPosition()
-        }
-    }
-
     @objc private func quit() {
         log("StayActive: quit requested")
         NSApp.terminate(nil)
@@ -818,15 +215,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
     // MARK: - Icon drawing (programmatic, no SF Symbol)
 
-    // Plain ring, always a template image so macOS tints it exactly like
-    // every other menu bar icon (same color, same vibrancy blend against
-    // the bar) in every appearance -- drawn once and never redrawn, since
-    // its look never depends on app state. The active/inactive indicator
-    // lives entirely in the separate dot views (see makeInactiveDotImage
-    // and DotOverlayView) rather than here, because isTemplate re-tints an
-    // entire image uniformly from its alpha mask: a single image can't have
-    // a native-matching ring and an explicitly-colored dot at the same time.
-    private func makeRingImage() -> NSImage {
+    // One combined image (a ring with a filled dot centered inside it) for
+    // both states, instead of the ring and the active/inactive indicator
+    // being separate images/views. Inactive is drawn in black and marked
+    // as a template image, so macOS tints it exactly like every other
+    // native menu bar icon; active is drawn in explicit green and left
+    // non-template, so the color shows as-is instead of being tinted away.
+    //
+    // A non-template, explicitly-colored menu bar image is known (from
+    // this app's own history) to be able to shift hue on a dimmed
+    // non-key-screen's mirrored copy of the menu bar -- if that turns out
+    // to still happen with this single-image approach, it needs to be
+    // weighed against the drag/hide bugs the separate-overlay-window
+    // approach had instead; the two are trading one set of problems for
+    // another, not a strictly-better replacement.
+    private func makeIconImage(active: Bool) -> NSImage {
         let size = NSSize(width: 18, height: 18)
         let image = NSImage(size: size)
 
@@ -835,54 +238,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
         guard let ctx = NSGraphicsContext.current?.cgContext else { return image }
 
+        let color: NSColor = active ? NSColor(srgbRed: 0.20, green: 0.78, blue: 0.35, alpha: 1.0) : .black
+
         // Whole-number inset so the circle's bounds land on exact pixel
-        // boundaries in the 18x18 canvas -- a fractional inset (the
-        // previous 1.8) still resolves mathematically centered, but the
-        // resulting sub-pixel anti-aliasing at such a tiny size can read as
-        // visually off-center. Line width is independent of this and can
-        // be any thickness without affecting centering, since the stroke
-        // is applied symmetrically around the (already-centered) path.
+        // boundaries in the 18x18 canvas -- a fractional inset still
+        // resolves mathematically centered, but the resulting sub-pixel
+        // anti-aliasing at such a tiny size can read as visually off-center.
         let lineWidth: CGFloat = 1.2
         let inset: CGFloat = 2
-        let circleRect = NSRect(
+        let ringRect = NSRect(
             x: inset,
             y: inset,
             width: size.width - inset * 2,
             height: size.height - inset * 2
         )
-
-        ctx.setStrokeColor(NSColor.black.cgColor)
+        ctx.setStrokeColor(color.cgColor)
         ctx.setLineWidth(lineWidth)
-        ctx.strokeEllipse(in: circleRect)
+        ctx.strokeEllipse(in: ringRect)
 
-        image.isTemplate = true
-        return image
-    }
-
-    // Small overlay image centered on top of the ring, shown only while
-    // inactive. Always a template image so it's tinted identically to the
-    // ring and reads as part of the same native-colored icon. The active
-    // state's green dot is a separate floating window instead (see
-    // DotOverlayView) -- two attempts to keep an explicit color drawn into
-    // this same view from shifting hue on a dimmed non-key-screen menu bar
-    // (disabling vibrancy, then full opacity + explicit sRGB) both failed,
-    // pointing at a transform applied to the status item's own backing
-    // content rather than anything fixable via this view's image.
-    private func makeInactiveDotImage() -> NSImage {
-        // Even-numbered size: centering a 6pt view in an 18pt one lands on
-        // a whole number (6pt margin each side); an odd 7 landed on a
+        // Even-numbered size: centering a 6pt dot in an 18pt canvas lands
+        // on a whole number (6pt margin each side); an odd 7 landed on a
         // fractional 5.5pt margin.
-        let size = NSSize(width: 6, height: 6)
-        let image = NSImage(size: size)
+        let dotSize: CGFloat = 6
+        let dotRect = NSRect(
+            x: (size.width - dotSize) / 2,
+            y: (size.height - dotSize) / 2,
+            width: dotSize,
+            height: dotSize
+        )
+        ctx.setFillColor(color.cgColor)
+        ctx.fillEllipse(in: dotRect)
 
-        image.lockFocus()
-        defer { image.unlockFocus() }
-
-        guard let ctx = NSGraphicsContext.current?.cgContext else { return image }
-        ctx.setFillColor(NSColor.black.cgColor)
-        ctx.fillEllipse(in: NSRect(origin: .zero, size: size))
-
-        image.isTemplate = true
+        image.isTemplate = !active
         return image
     }
 
@@ -893,18 +280,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         let options: CFDictionary = [promptKey: true] as CFDictionary
         let trusted = AXIsProcessTrustedWithOptions(options)
         log("StayActive: AXIsProcessTrustedWithOptions -> trusted = \(trusted)")
-    }
-
-    // Purely diagnostic, read-only, never prompts (CGPreflightScreenCaptureAccess
-    // just reports current status). isWindowCurrentlyOnScreen queries this
-    // app's OWN window via CGWindowListCopyWindowInfo, which shouldn't need
-    // Screen Recording permission at all (that gate is for reading OTHER
-    // processes' window info) -- but given that API has crashed here twice
-    // before on this exact macOS version for reasons never fully pinned
-    // down, logging this costs nothing and rules the permission in or out
-    // as a factor if it happens again.
-    private func logScreenCapturePermissionStatus() {
-        log("StayActive: CGPreflightScreenCaptureAccess -> \(CGPreflightScreenCaptureAccess())")
     }
 
     // MARK: - App Nap / idle sleep prevention

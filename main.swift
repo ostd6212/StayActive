@@ -394,13 +394,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     // windowNumber). Whatever the exact remaining cause on this specific,
     // very new macOS version, a crash on every launch is a far worse
     // outcome than the overflow-detection gap this was meant to close.
-    // Reverted to occlusionState.contains(.visible) -- it doesn't catch a
-    // menu extra collapsed behind the "<<"/">>" overflow chevron or
-    // dragged into the customize view (confirmed live, it stays reported
-    // as unoccluded then too), but it's a plain AppKit property that has
-    // never crashed anything here.
+    // Reverted to plain AppKit properties instead, which have never
+    // crashed anything here. occlusionState.contains(.visible) alone
+    // doesn't catch a menu extra collapsed behind the "<<"/">>" overflow
+    // chevron (confirmed live, it stays reported as unoccluded then too)
+    // -- but per setupStatusItem's own comment, macOS orders the button's
+    // window out entirely for that case, which isVisible does reflect.
+    // Checking both together costs nothing and can only narrow the gap,
+    // never widen it.
     private func isWindowCurrentlyOnScreen(_ window: NSWindow) -> Bool {
-        window.occlusionState.contains(.visible)
+        window.isVisible && window.occlusionState.contains(.visible)
     }
 
     private func showDotOverlay() {
@@ -426,7 +429,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     private func hideDotOverlay() {
         dotOverlayTimer?.invalidate()
         dotOverlayTimer = nil
-        dotOverlayWindows.forEach { $0.orderOut(nil) }
+        dotOverlayWindows.forEach {
+            $0.parent?.removeChildWindow($0)
+            $0.orderOut(nil)
+        }
     }
 
     // In macOS's "Displays have separate Spaces" setup (the default), a
@@ -516,14 +522,67 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             dotOverlayWindows.append(makeDotOverlayWindow())
         }
         while dotOverlayWindows.count > screens.count {
-            dotOverlayWindows.removeLast().orderOut(nil)
+            let removed = dotOverlayWindows.removeLast()
+            removed.parent?.removeChildWindow(removed)
+            removed.orderOut(nil)
         }
 
         for (window, screen) in zip(dotOverlayWindows, screens) {
             if screen === ownerScreen && ownerIsOccluded {
+                if window.parent != nil {
+                    window.parent?.removeChildWindow(window)
+                }
                 window.orderOut(nil)
                 continue
             }
+
+            // The owner screen's overlay is additionally made a real
+            // AppKit child window of the button's own window, on top of
+            // the explicit repositioning below. Both the drag-desync bug
+            // ("крапка живе окремо від кільця") and the overflow-collapse
+            // bug (dot left floating with no ring under it) trace back to
+            // the same root cause: the button's window can be moved or
+            // ordered out by SystemUIServer directly (drag-reordering
+            // icons, or collapsing behind the "<<"/">>" chevron), which
+            // does not reliably fire didMove/didResize/didChangeOcclusion
+            // notifications on it (confirmed live) -- there is nothing for
+            // this app's own notification handlers to react to for either
+            // case. A child window's position and ordering are tracked by
+            // the window server itself as an intrinsic property of the
+            // parent/child relationship, not via notifications this
+            // process has to observe and react to -- so it moves and
+            // hides/shows in lockstep with the real window regardless of
+            // what mechanism (ours or SystemUIServer's) caused the change,
+            // closing exactly the gap polling and notifications couldn't.
+            // This uses only ordinary, long-documented AppKit API
+            // (NSWindow.addChildWindow), not CoreGraphics/Quartz window
+            // introspection -- unlike the kCGWindowIsOnscreen attempt
+            // above, there's no history of this crashing anything here.
+            // The explicit repositioning every poll below is kept as-is
+            // regardless, as a self-healing backstop in case the native
+            // tracking ever drifts.
+            if screen === ownerScreen {
+                if window.parent !== buttonWindow {
+                    window.parent?.removeChildWindow(window)
+                    buttonWindow.addChildWindow(window, ordered: .above)
+                    // Not documented either way, but cheap to reassert:
+                    // some AppKit versions are known to normalize a child
+                    // window's level toward its parent's on attach, which
+                    // would be harmless here anyway (buttonWindow's own
+                    // level should already be at least this high) but
+                    // there's no reason to depend on that being true.
+                    window.level = .statusBar
+                }
+            } else if window.parent != nil {
+                // A screen that was previously the owner (and got its
+                // overlay attached above) can stop being the owner if
+                // ownership migrates elsewhere -- detach it so it goes
+                // back to being positioned purely from its own cached
+                // offsets instead of still tracking the button window it
+                // no longer corresponds to.
+                window.parent?.removeChildWindow(window)
+            }
+
             // Every screen (including the owner) reads its own last-
             // recorded offsets here -- for the owner, that's the value
             // just measured and stored above. Falling back to the owning

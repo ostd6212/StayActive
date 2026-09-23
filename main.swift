@@ -69,7 +69,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     // the same diagnostic picture (every real transition, in order) at any
     // poll rate.
     private var lastLoggedButtonFrame: NSRect?
-    private var lastLoggedOwnerWindowOrigin: NSPoint?
+
+    // Once true, the owner screen's overlay window's frame is left alone
+    // instead of being explicitly re-set every poll -- see the comment at
+    // its use site for why. Reset to false whenever the position needs to
+    // be freshly (re-)established: on a fresh addChildWindow attach, or
+    // when repositionDotOverlay's notifications fire (screen parameters
+    // changed, or the occlusion-state notification).
+    private var ownerOverlayPositionEstablished = false
 
     // Per-screen offsets (distance from that screen's own right edge, and
     // height above that screen's own visibleFrame.maxY), recorded from real
@@ -560,31 +567,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
                 continue
             }
 
-            // The owner screen's overlay is additionally made a real
-            // AppKit child window of the button's own window, on top of
-            // the explicit repositioning below. Both the drag-desync bug
-            // ("крапка живе окремо від кільця") and the overflow-collapse
-            // bug (dot left floating with no ring under it) trace back to
-            // the same root cause: the button's window can be moved or
-            // ordered out by SystemUIServer directly (drag-reordering
-            // icons, or collapsing behind the "<<"/">>" chevron), which
-            // does not reliably fire didMove/didResize/didChangeOcclusion
-            // notifications on it (confirmed live) -- there is nothing for
-            // this app's own notification handlers to react to for either
-            // case. A child window's position and ordering are tracked by
-            // the window server itself as an intrinsic property of the
-            // parent/child relationship, not via notifications this
-            // process has to observe and react to -- so it moves and
-            // hides/shows in lockstep with the real window regardless of
-            // what mechanism (ours or SystemUIServer's) caused the change,
-            // closing exactly the gap polling and notifications couldn't.
-            // This uses only ordinary, long-documented AppKit API
-            // (NSWindow.addChildWindow), not CoreGraphics/Quartz window
-            // introspection -- unlike the kCGWindowIsOnscreen attempt
-            // above, there's no history of this crashing anything here.
-            // The explicit repositioning every poll below is kept as-is
-            // regardless, as a self-healing backstop in case the native
-            // tracking ever drifts.
+            // The owner screen's overlay is made a real AppKit child
+            // window of the button's own window. Both the drag-desync bug
+            // and the overflow-collapse bug trace back to the button's
+            // window being moved/ordered out by SystemUIServer directly,
+            // without firing didMove/didResize/didChangeOcclusion (confirmed
+            // live). A child window's position is tracked by the window
+            // server itself as an intrinsic property of the parent/child
+            // relationship -- not via notifications this process has to
+            // observe -- so it should move in lockstep with the real
+            // window regardless of what caused the parent to move.
+            //
+            // This used to ALSO explicitly re-set the child's frame every
+            // poll, on top of the addChildWindow relationship, meant as a
+            // "self-healing backstop". Confirmed live that was actually
+            // fighting the relationship instead of backstopping it:
+            // dropping the poll interval to 0.03s (from 0.3s) made the
+            // logged position land within 1-25ms of every real move, yet
+            // the dot still visibly lived its own life during a drag.
+            // That rules out timing/frequency as the remaining cause --
+            // the issue is relying on an independently-timed Timer tick to
+            // redraw a SEPARATE window at all, rather than the window
+            // server's own atomic parent/child move: two windows updated
+            // by two different mechanisms don't land in the same
+            // compositor frame even when the math is correct to the
+            // millisecond, and a human eye is very sensitive to exactly
+            // that kind of one-frame mismatch between two things that are
+            // supposed to be rigidly locked together. So now the frame is
+            // set explicitly only ONCE right after attaching (establishing
+            // the relative offset addChildWindow then maintains on its
+            // own), not on every subsequent poll -- see
+            // ownerOverlayPositionEstablished below.
             if screen === ownerScreen {
                 if window.parent !== buttonWindow {
                     window.parent?.removeChildWindow(window)
@@ -596,6 +609,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
                     // level should already be at least this high) but
                     // there's no reason to depend on that being true.
                     window.level = .statusBar
+                    ownerOverlayPositionEstablished = false
+                }
+                if ownerOverlayPositionEstablished {
+                    // Already attached and correctly positioned -- trust
+                    // addChildWindow to keep it glued to buttonWindow's
+                    // real position for any subsequent move, instead of
+                    // re-deriving and re-setting our own independent guess
+                    // at that same position every 0.03s (see the long
+                    // comment above for why that was the actual problem).
+                    window.orderFrontRegardless()
+                    continue
                 }
             } else if window.parent != nil {
                 // A screen that was previously the owner (and got its
@@ -647,22 +671,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             (window.contentView as? DotOverlayView)?.dotOrigin = fraction
             window.orderFrontRegardless()
 
-            if screen === ownerScreen && windowOrigin != lastLoggedOwnerWindowOrigin {
+            if screen === ownerScreen {
+                ownerOverlayPositionEstablished = true
                 // Temporary diagnostic logging alongside the one in the
-                // guard above -- see that comment. Edge-triggered for the
-                // same reason (see lastLoggedButtonFrame). Confirms
-                // whether the addChildWindow attach actually took (parent
-                // identity) and what position this poll landed on, so it
-                // can be compared against the frame log's timestamp to see
-                // how quickly a real move gets picked up.
-                lastLoggedOwnerWindowOrigin = windowOrigin
-                log("StayActive: [dbg] owner overlay attachedToButton=\(window.parent === buttonWindow) windowOrigin=\(windowOrigin) insetFromRight=\(offsets.insetFromRight) heightAboveVisibleFrame=\(offsets.heightAboveVisibleFrame)")
+                // guard above -- see that comment. Now only fires when the
+                // owner overlay's position is freshly (re-)established
+                // (attach, or a forced re-sync from repositionDotOverlay),
+                // not every poll -- confirms whether the attach took
+                // (parent identity) and what position it was pinned to.
+                log("StayActive: [dbg] owner overlay position (re-)established, attachedToButton=\(window.parent === buttonWindow) windowOrigin=\(windowOrigin) insetFromRight=\(offsets.insetFromRight) heightAboveVisibleFrame=\(offsets.heightAboveVisibleFrame)")
             }
         }
     }
 
     @objc private func repositionDotOverlay() {
         log("StayActive: [dbg] repositionDotOverlay fired (screen-params or occlusion-state notification)")
+        // Screen parameters (resolution, arrangement, Dock/menu bar size)
+        // or occlusion state changing are exactly the cases that really do
+        // need the owner overlay's position freshly re-derived, unlike a
+        // routine poll tick -- force that instead of trusting whatever
+        // addChildWindow already has.
+        ownerOverlayPositionEstablished = false
         updateDotOverlayPosition()
     }
 

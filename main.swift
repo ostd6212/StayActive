@@ -62,6 +62,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     private var dotOverlayTimer: Timer?
     private var dotOverlayDebounceTimer: Timer?
 
+    // Edge-triggered state for the temporary [dbg] logging in
+    // updateDotOverlayPosition -- logging every poll was fine at 0.3s, but
+    // would flood the log at the much faster 0.03s interval needed to
+    // track a live drag closely. Logging only on an actual change gives
+    // the same diagnostic picture (every real transition, in order) at any
+    // poll rate.
+    private var lastLoggedButtonFrame: NSRect?
+    private var lastLoggedOwnerWindowOrigin: NSPoint?
+
     // Per-screen offsets (distance from that screen's own right edge, and
     // height above that screen's own visibleFrame.maxY), recorded from real
     // measurements whenever that particular screen is the one owning the
@@ -411,17 +420,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
         // didMove/didResize on the button's own window (registered in
         // setupStatusItem) catches most repositioning immediately, but
-        // confirmed live, the large jump when the menu bar's own "<<"/">>"
-        // overflow collapses or expands doesn't fire either notification
-        // -- that move is most likely driven directly by SystemUIServer
-        // rather than through the standard AppKit window-moving API this
-        // app's own process would use, so there's nothing here to observe
-        // for it. It still self-corrects once this periodic recheck's
-        // next tick lands, so a short interval keeps that self-correction
-        // fast enough to not read as "stuck" (confirmed live: at 1.0s it
-        // was noticeable; this is cheap enough to run much more often).
+        // confirmed live via diagnostic logging during an actual drag of
+        // the icon: buttonWindow.frame changed through many distinct
+        // intermediate values (e.g. 610 -> 849 -> 887 -> 900 -> 907 -> ...)
+        // with a new value appearing every ~0.3s -- exactly this timer's
+        // old interval -- and with NOT ONE didMove/didResize notification
+        // logged in between. So during a live drag, nothing here ever
+        // fires at all; this periodic poll was the ONLY thing catching the
+        // movement, once every 0.3s, which is exactly the visible
+        // "lives its own life, chases the ring" lag reported. Dropping the
+        // interval to 0.03s (still cheap -- this is just a rect
+        // computation and one setFrameOrigin call) makes that catch-up gap
+        // small enough to read as instantaneous instead.
         dotOverlayTimer?.invalidate()
-        dotOverlayTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in
+        dotOverlayTimer = Timer.scheduledTimer(withTimeInterval: 0.03, repeats: true) { [weak self] _ in
             self?.updateDotOverlayPosition()
         }
     }
@@ -491,17 +503,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         // untouched.
         let ownerIsOccluded = !isWindowCurrentlyOnScreen(buttonWindow)
 
-        // Temporary diagnostic logging: the addChildWindow fix (see the
-        // owner-screen branch below) made no visible difference to either
-        // the drag-desync or the overflow-collapse bug when tested live,
-        // which means at least one assumption behind it is wrong --
-        // either buttonWindow doesn't actually move/hide the way believed,
-        // or the child-window relationship isn't taking effect. Logging
-        // the raw values every poll (instead of guessing again) lets the
-        // next repro attempt show what's actually happening instead of
-        // what was assumed. Safe to remove once the real behavior here is
-        // understood.
-        log("StayActive: [dbg] buttonWindow.frame=\(buttonWindow.frame) isVisible=\(buttonWindow.isVisible) occlusionState=\(buttonWindow.occlusionState.rawValue) ownerIsOccluded=\(ownerIsOccluded) screen=\(ownerScreen.localizedName)")
+        // Temporary diagnostic logging, edge-triggered (see
+        // lastLoggedButtonFrame) so it stays readable even at this
+        // function's fast poll rate. This is what previously showed the
+        // drag-desync root cause (see showDotOverlay's comment) -- kept
+        // around since the overflow-collapse bug is still unexplained:
+        // isVisible/occlusionState have never once changed away from
+        // "visible" for that case in any capture so far.
+        if buttonWindow.frame != lastLoggedButtonFrame {
+            lastLoggedButtonFrame = buttonWindow.frame
+            log("StayActive: [dbg] buttonWindow.frame=\(buttonWindow.frame) isVisible=\(buttonWindow.isVisible) occlusionState=\(buttonWindow.occlusionState.rawValue) ownerIsOccluded=\(ownerIsOccluded) screen=\(ownerScreen.localizedName)")
+        }
 
         // buttonWindow.frame.mid{X,Y} was tried here first, then the
         // (hidden while active) dotView's own layout -- but confirmed
@@ -635,11 +647,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             (window.contentView as? DotOverlayView)?.dotOrigin = fraction
             window.orderFrontRegardless()
 
-            if screen === ownerScreen {
+            if screen === ownerScreen && windowOrigin != lastLoggedOwnerWindowOrigin {
                 // Temporary diagnostic logging alongside the one in the
-                // guard above -- see that comment. Confirms whether the
-                // addChildWindow attach actually took (parent identity)
-                // and what position/offsets it's using each poll.
+                // guard above -- see that comment. Edge-triggered for the
+                // same reason (see lastLoggedButtonFrame). Confirms
+                // whether the addChildWindow attach actually took (parent
+                // identity) and what position this poll landed on, so it
+                // can be compared against the frame log's timestamp to see
+                // how quickly a real move gets picked up.
+                lastLoggedOwnerWindowOrigin = windowOrigin
                 log("StayActive: [dbg] owner overlay attachedToButton=\(window.parent === buttonWindow) windowOrigin=\(windowOrigin) insetFromRight=\(offsets.insetFromRight) heightAboveVisibleFrame=\(offsets.heightAboveVisibleFrame)")
             }
         }

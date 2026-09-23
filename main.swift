@@ -491,6 +491,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         // untouched.
         let ownerIsOccluded = !isWindowCurrentlyOnScreen(buttonWindow)
 
+        // Temporary diagnostic logging: the addChildWindow fix (see the
+        // owner-screen branch below) made no visible difference to either
+        // the drag-desync or the overflow-collapse bug when tested live,
+        // which means at least one assumption behind it is wrong --
+        // either buttonWindow doesn't actually move/hide the way believed,
+        // or the child-window relationship isn't taking effect. Logging
+        // the raw values every poll (instead of guessing again) lets the
+        // next repro attempt show what's actually happening instead of
+        // what was assumed. Safe to remove once the real behavior here is
+        // understood.
+        log("StayActive: [dbg] buttonWindow.frame=\(buttonWindow.frame) isVisible=\(buttonWindow.isVisible) occlusionState=\(buttonWindow.occlusionState.rawValue) ownerIsOccluded=\(ownerIsOccluded) screen=\(ownerScreen.localizedName)")
+
         // buttonWindow.frame.mid{X,Y} was tried here first, then the
         // (hidden while active) dotView's own layout -- but confirmed
         // live, clicking Start left the dot shifted down afterward, and it
@@ -622,10 +634,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             window.setFrameOrigin(windowOrigin)
             (window.contentView as? DotOverlayView)?.dotOrigin = fraction
             window.orderFrontRegardless()
+
+            if screen === ownerScreen {
+                // Temporary diagnostic logging alongside the one in the
+                // guard above -- see that comment. Confirms whether the
+                // addChildWindow attach actually took (parent identity)
+                // and what position/offsets it's using each poll.
+                log("StayActive: [dbg] owner overlay attachedToButton=\(window.parent === buttonWindow) windowOrigin=\(windowOrigin) insetFromRight=\(offsets.insetFromRight) heightAboveVisibleFrame=\(offsets.heightAboveVisibleFrame)")
+            }
         }
     }
 
     @objc private func repositionDotOverlay() {
+        log("StayActive: [dbg] repositionDotOverlay fired (screen-params or occlusion-state notification)")
         updateDotOverlayPosition()
     }
 
@@ -638,6 +659,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     // of move/resize notifications from one interaction only measures once
     // things have settled.
     @objc private func buttonWindowGeometryChanged() {
+        log("StayActive: [dbg] buttonWindowGeometryChanged fired (didMove/didResize notification)")
         dotOverlayDebounceTimer?.invalidate()
         dotOverlayDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: false) { [weak self] _ in
             self?.updateDotOverlayPosition()

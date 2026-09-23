@@ -512,12 +512,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
 
         // Safety-net self-heal -- see ownerOverlayPositionEstablished's own
         // comment for why this exists. At the 0.03s poll interval this
-        // fires roughly every 2s, which is frequent enough to bound how
+        // fires roughly every 10s, which is frequent enough to bound how
         // long a bad establishment could persist undetected, but rare
         // enough that the brief re-sync it triggers isn't itself a visible
-        // source of jitter.
+        // source of jitter. Also the thing that periodically calls
+        // orderFrontRegardless() again (see the owner-screen branch below)
+        // -- kept fairly infrequent so that while the icon is genuinely
+        // collapsed behind the overflow chevron, this doesn't fight
+        // SystemUIServer's own covering layer back into place too often
+        // (some flicker every ~10s is an acceptable trade-off against
+        // going back to fighting it every single poll).
         ownerOverlaySelfHealCounter += 1
-        if ownerOverlaySelfHealCounter >= 67 {
+        if ownerOverlaySelfHealCounter >= 333 {
             ownerOverlaySelfHealCounter = 0
             ownerOverlayPositionEstablished = false
         }
@@ -652,7 +658,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
                     // re-deriving and re-setting our own independent guess
                     // at that same position every 0.03s (see the long
                     // comment above for why that was the actual problem).
-                    window.orderFrontRegardless()
+                    //
+                    // Deliberately NOT calling orderFrontRegardless() here
+                    // anymore. Diagnostic logging from an actual
+                    // collapse-behind-the-chevron repro showed
+                    // buttonWindow.frame, isVisible and occlusionState all
+                    // stay completely unchanged throughout -- the real
+                    // ring is visually covered by something SystemUIServer
+                    // draws on top of it, without touching this app's
+                    // window at all. Our dot staying visible on top of
+                    // that same covering layer (confirmed live via
+                    // screenshot: the dot floating right next to the
+                    // chevron with no ring under it) is consistent with
+                    // forcing it frontmost on every single poll -- far
+                    // more often than the covering layer would ever need
+                    // to reassert itself -- so ours could never end up
+                    // BELOW it. Only reordering front when the position is
+                    // freshly (re-)established (rare -- see the self-heal
+                    // above) gives the system's own covering layer room to
+                    // end up above ours the same way it ends up above the
+                    // real ring, instead of this app fighting that too.
                     continue
                 }
             } else if window.parent != nil {

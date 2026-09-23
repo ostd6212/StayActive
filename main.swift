@@ -333,6 +333,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         log("StayActive: setActive(\(newValue)) reason=\(reason)")
 
         dotView?.isHidden = isActive
+        // Confirmed live: the gray template dot still showed on a
+        // non-owning screen's mirrored copy of the icon after being hidden
+        // here, while correctly hidden on the screen that owns the real
+        // window -- setting isHidden alone doesn't reliably reach whatever
+        // mechanism mirrors this button's content onto other screens.
+        // Explicitly marking both the dot and its superview dirty pushes a
+        // real redraw that mirroring can pick up, instead of relying on
+        // isHidden's own (evidently sometimes-skipped) invalidation.
+        dotView?.needsDisplay = true
+        dotView?.superview?.needsDisplay = true
         if isActive {
             showDotOverlay()
         } else {

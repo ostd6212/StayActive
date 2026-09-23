@@ -69,6 +69,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     // the same diagnostic picture (every real transition, in order) at any
     // poll rate.
     private var lastLoggedButtonFrame: NSRect?
+    private var lastLoggedStatusItemIsVisible: Bool?
+    private var lastLoggedButtonIsHidden: Bool?
 
     // Once true, the owner screen's overlay window's frame is left alone
     // instead of being explicitly re-set every poll -- see the comment at
@@ -555,11 +557,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         // function's fast poll rate. This is what previously showed the
         // drag-desync root cause (see showDotOverlay's comment) -- kept
         // around since the overflow-collapse bug is still unexplained:
-        // isVisible/occlusionState have never once changed away from
-        // "visible" for that case in any capture so far.
-        if buttonWindow.frame != lastLoggedButtonFrame {
+        // buttonWindow.frame/isVisible/occlusionState have never once
+        // changed for that case in any capture so far. Two more cheap,
+        // zero-risk (plain BOOL properties, no CoreGraphics) signals added
+        // here that haven't been tried yet: NSStatusItem.isVisible and the
+        // button's own isHidden -- logged on ANY change (not just a frame
+        // change, since frame is exactly what does NOT change during a
+        // collapse) in case either of these actually does reflect it.
+        let statusItemIsVisible = statusItem.isVisible
+        let buttonIsHidden = statusItem.button?.isHidden ?? true
+        if buttonWindow.frame != lastLoggedButtonFrame
+            || statusItemIsVisible != lastLoggedStatusItemIsVisible
+            || buttonIsHidden != lastLoggedButtonIsHidden {
             lastLoggedButtonFrame = buttonWindow.frame
-            log("StayActive: [dbg] buttonWindow.frame=\(buttonWindow.frame) isVisible=\(buttonWindow.isVisible) occlusionState=\(buttonWindow.occlusionState.rawValue) ownerIsOccluded=\(ownerIsOccluded) screen=\(ownerScreen.localizedName)")
+            lastLoggedStatusItemIsVisible = statusItemIsVisible
+            lastLoggedButtonIsHidden = buttonIsHidden
+            log("StayActive: [dbg] buttonWindow.frame=\(buttonWindow.frame) isVisible=\(buttonWindow.isVisible) occlusionState=\(buttonWindow.occlusionState.rawValue) ownerIsOccluded=\(ownerIsOccluded) statusItemIsVisible=\(statusItemIsVisible) buttonIsHidden=\(buttonIsHidden) screen=\(ownerScreen.localizedName)")
         }
 
         // buttonWindow.frame.mid{X,Y} was tried here first, then the
